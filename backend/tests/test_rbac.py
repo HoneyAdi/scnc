@@ -119,7 +119,10 @@ def test_live_session_dies_on_deactivation(client, db, superadmin):
     from app.services import auth_service
 
     _make_user(db, "live1", "LivePass123456!", "Viewer", ["audit.view"])
-    token = login_as(client, "live1", "LivePass123456!").json()["token"]
+    # The session credential travels ONLY in the HttpOnly cookie now (never in JSON).
+    assert login_as(client, "live1", "LivePass123456!").json().get("token") is None
+    token = client.cookies.get("scnc_session")
+    assert token
     assert auth_service.validate_session(db, token) is not None
     # Super Admin deactivates live1 (revokes all sessions in the same transaction).
     login_as(client, "root_tester", "CorrectHorse12!")
@@ -133,3 +136,73 @@ def test_live_session_dies_on_deactivation(client, db, superadmin):
     ).all()
     assert remaining == []
     assert auth_service.validate_session(db, token) is None
+
+
+def test_failed_user_create_leaves_nothing(client, db, superadmin, app_engine):
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session as SaSession
+
+    from app.models.auth import AuditLog, User, UserRole
+
+    def committed_counts():
+        # A separate connection observes only COMMITTED state: the failed
+        # request must commit nothing, even though the test's own session
+        # may still hold uncommitted (rolled-back-at-teardown) rows.
+        conn = app_engine.connect()
+        try:
+            with SaSession(bind=conn) as s:
+                return (
+                    len(s.execute(select(User)).all()),
+                    len(s.execute(select(UserRole)).all()),
+                    len(s.execute(select(AuditLog)).all()),
+                )
+        finally:
+            conn.close()
+
+    login_as(client, "root_tester", "CorrectHorse12!")
+    before = committed_counts()
+
+    r = client.post(
+        "/api/v1/admin/users",
+        json={"username": "halfMade", "password": "HalfMadePass1!", "roles": ["NoSuchRole"]},
+    )
+    assert r.status_code == 400
+    assert committed_counts() == before
+
+
+def test_system_super_admin_role_is_untouchable(client, db, superadmin):
+    from sqlalchemy import func, select
+
+    from app.models.auth import Permission, Role
+    from app.services import auth_service
+
+    login_as(client, "root_tester", "CorrectHorse12!")
+    # No modification/removal endpoints exist for roles.
+    assert client.put("/api/v1/admin/roles/1", json={}).status_code == 404
+    assert client.delete("/api/v1/admin/roles/1").status_code in (404, 405)
+    assert client.patch("/api/v1/admin/roles/1", json={}).status_code in (404, 405)
+    # A duplicate "Super Admin" role cannot be smuggled in.
+    r = client.post(
+        "/api/v1/admin/roles",
+        json={"name": "Super Admin", "description": "fake", "permissions": []},
+    )
+    assert r.status_code == 400
+    role = db.execute(select(Role).where(Role.name == "Super Admin")).scalar_one()
+    assert role.is_system is True
+    total_perms = db.execute(select(func.count(Permission.id))).scalar()
+    assert len(auth_service.user_permissions(db, superadmin.id)) == total_perms
+
+
+def test_role_create_requires_permission_and_is_audited(client, db):
+    from sqlalchemy import select
+
+    from app.models.auth import AuditLog
+
+    _make_user(db, "roleviewer", "RoleViewPass1!", "RoleViewer", ["roles.view"])
+    login_as(client, "roleviewer", "RoleViewPass1!")
+    r = client.post(
+        "/api/v1/admin/roles",
+        json={"name": "Sneaky", "description": "", "permissions": []},
+    )
+    assert r.status_code == 403
+    assert db.execute(select(AuditLog).where(AuditLog.action == "role.create")).all() == []

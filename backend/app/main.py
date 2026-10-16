@@ -7,8 +7,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from app.api.csrf import OriginCheckMiddleware
 from app.api.v1 import admin_audit, admin_roles, admin_users, auth, setup
 from app.core import logging_config
+from app.core.config import get_settings
 from app.core.logging_config import logger
 from app.db.session import get_session
 from app.services import bootstrap
@@ -16,8 +18,19 @@ from app.services import bootstrap
 logging_config.configure_logging()
 
 
+def enforce_prod_security(settings) -> None:
+    """Fail fast if production would run without TLS-grade session cookies.
+
+    HTTP is NEVER safe for production credentials. Localhost development
+    (ENV != prod) stays usable over plain HTTP.
+    """
+    if settings.ENV == "prod" and not settings.SESSION_SECURE_COOKIE:
+        raise RuntimeError("Refusing to start: prod requires SESSION_SECURE_COOKIE=true (TLS).")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    enforce_prod_security(get_settings())
     db = get_session()
     try:
         token = bootstrap.ensure_setup_token(db)
@@ -32,11 +45,13 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    settings = get_settings()
     app = FastAPI(title="SCN College Accounting API", version="0.1.0", lifespan=lifespan)
 
+    app.add_middleware(OriginCheckMiddleware)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+        allow_origins=settings.CORS_ORIGINS,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

@@ -28,7 +28,7 @@ export const api = {
     request("/api/v1/auth/login", {
       method: "POST",
       body: JSON.stringify({ username, password }),
-    }) as Promise<{ user: UserInfo; token: string }>,
+    }) as Promise<{ user: UserInfo }>,
   logout: () => request("/api/v1/auth/logout", { method: "POST", body: "{}" }),
   me: () => request("/api/v1/me") as Promise<UserInfo>,
 };

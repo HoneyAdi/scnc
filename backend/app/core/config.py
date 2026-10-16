@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     SESSION_COOKIE_NAME: str = "scnc_session"
     SESSION_EXPIRE_MINUTES: int = 480
     SESSION_SECURE_COOKIE: bool = False  # set True when serving over TLS
+    CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
     MAX_LOGIN_ATTEMPTS: int = 5
     LOCKOUT_MINUTES: int = 15
 

@@ -43,7 +43,11 @@ def login(
         max_age=settings.SESSION_EXPIRE_MINUTES * 60,
         path="/",
     )
-    return {"user": _user_out(db, user), "token": token}
+    # The raw token is deliberately NOT returned in the JSON body: the HttpOnly
+    # cookie is the sole browser credential (XSS cannot read it from JS). API
+    # clients that cannot use cookies may present the cookie value they received
+    # via `Authorization: Bearer <token>` instead.
+    return {"user": _user_out(db, user)}
 
 
 @router.post("/auth/logout")

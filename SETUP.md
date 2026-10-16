@@ -103,3 +103,14 @@ pg_dump -U scnc_owner -h 127.0.0.1 -p 5434 -Fc scnc_dev -f backups\scnc_dev.dump
 ```
 
 Production backup/restore procedures arrive with Phase 9. No production use is approved.
+
+## 9. Security notes
+
+- HTTP is NEVER safe for production credentials. Production must terminate TLS
+  and set `ENV=prod` with `SESSION_SECURE_COOKIE=true`; the backend refuses to
+  start otherwise. Localhost development (`ENV=dev`) stays on plain HTTP.
+- Browser mutations additionally require a matching `Origin`/`Referer` host
+  (mismatches are rejected with 403); non-browser API clients omit these headers.
+- The login response carries no session token — the HttpOnly cookie is the only
+  browser credential. The one-time setup token exists only in
+  `backend\storage\setup\setup_token.txt` (restricted file, never logged).

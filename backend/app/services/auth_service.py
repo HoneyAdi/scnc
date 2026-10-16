@@ -1,7 +1,7 @@
 """Authentication, sessions, RBAC checks, and guarded user administration."""
 import datetime as dt
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, select, text
 from sqlalchemy.orm import Session as DbSession
 
 from app.core.config import get_settings
@@ -58,6 +58,16 @@ def _is_super_admin(db: DbSession, user_id: int) -> bool:
         ).scalar()
         or 0
     ) > 0
+
+
+def _membership_lock(db: DbSession) -> None:
+    """Serialize Super-Admin membership changes across processes.
+
+    The last-admin count check and the membership write must be atomic with
+    respect to concurrent deactivations; otherwise two requests could each
+    observe two active admins and both proceed. Transaction-scoped.
+    """
+    db.execute(text("SELECT pg_advisory_xact_lock(hashtext('scn_admin_membership'))"))
 
 
 def count_active_super_admins(db: DbSession) -> int:
@@ -155,6 +165,8 @@ def create_user(
 ) -> User:
     if db.execute(select(User).where(User.username == username)).scalar_one_or_none():
         raise AuthError("Username already exists.")
+    if SUPER_ADMIN_ROLE in role_names:
+        _membership_lock(db)
     user = User(username=username, password_hash=hash_password(password))
     db.add(user)
     db.flush()
@@ -179,6 +191,7 @@ def deactivate_user(db: DbSession, *, actor: User, user_id: int) -> User:
     user = db.get(User, user_id)
     if user is None:
         raise AuthError("User not found.")
+    _membership_lock(db)  # count check + deactivation + session revocation stay atomic
     if _is_super_admin(db, user_id) and count_active_super_admins(db) <= 1:
         raise AuthError("Cannot deactivate the last active Super Admin.")
     user.is_active = False

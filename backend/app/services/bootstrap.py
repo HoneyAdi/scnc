@@ -2,7 +2,8 @@
 import datetime as dt
 import secrets
 
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DbSession
 
 from app.core.security import hash_password, hash_token
@@ -77,13 +78,23 @@ def ensure_setup_token(db: DbSession) -> str | None:
     expiry = utcnow() + dt.timedelta(minutes=SETUP_TOKEN_TTL_MINUTES)
     db.add(SystemSetting(key=SETUP_TOKEN_HASH_KEY, value={"hash": hash_token(token)}))
     db.add(SystemSetting(key=SETUP_TOKEN_EXPIRY_KEY, value={"at": expiry.isoformat()}))
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Lost a concurrent issuance race: the other transaction won. Never
+        # return a token we did not persist.
+        db.rollback()
+        return None
     return token
 
 
 def consume_setup_token(db: DbSession, *, token: str, username: str, password: str) -> User:
     from app.models.auth import SystemSetting
 
+    # Serialize concurrent setup attempts across processes: the advisory lock is
+    # transaction-scoped, so exactly one claimant proceeds; the other blocks, then
+    # re-checks and fails safely on the already-initialized system.
+    db.execute(text("SELECT pg_advisory_xact_lock(hashtext('scn_first_setup'))"))
     if is_initialized(db):
         raise ValueError("System is already initialized.")
     stored = db.get(SystemSetting, SETUP_TOKEN_HASH_KEY)
@@ -99,6 +110,9 @@ def consume_setup_token(db: DbSession, *, token: str, username: str, password: s
     role = db.execute(select(Role).where(Role.name == SUPER_ADMIN_ROLE)).scalar_one_or_none()
     if role is None:
         raise ValueError("Super Admin role is not seeded.")
+    # Policy: the token is consumed ONLY by a fully successful setup. Any failure
+    # above aborts before mutation, so a failed attempt leaves no partial admin
+    # and the token remains valid for a legitimate retry.
     user = User(username=username, password_hash=hash_password(password))
     db.add(user)
     db.flush()
