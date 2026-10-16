@@ -1,0 +1,52 @@
+"""Pydantic request/response schemas (validation at the boundary)."""
+from pydantic import BaseModel, Field
+
+
+class SetupRequest(BaseModel):
+    token: str = Field(min_length=16)
+    username: str = Field(min_length=3, max_length=64)
+    password: str = Field(min_length=12, max_length=128)
+
+
+class LoginRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=128)
+
+
+class UserOut(BaseModel):
+    id: int
+    username: str
+    is_active: bool
+    permissions: list[str] = []
+
+
+class CreateUserRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=64)
+    password: str = Field(min_length=12, max_length=128)
+    roles: list[str] = Field(default_factory=list)
+
+
+class RoleOut(BaseModel):
+    id: int
+    name: str
+    is_system: bool
+    description: str
+    permissions: list[str] = []
+
+
+class CreateRoleRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=64)
+    description: str = Field(default="", max_length=255)
+    permissions: list[str] = Field(default_factory=list)
+
+
+class AuditOut(BaseModel):
+    id: int
+    created_at: str
+    actor_id: int | None
+    action: str
+    entity: str
+    entity_id: str | None
+    details: dict | None
+    prev_hash: str
+    hash: str

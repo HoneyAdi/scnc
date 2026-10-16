@@ -1,0 +1,31 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+# Node
+node_modules/
+dist/
+.DS_Store
+# Environments and secrets (NEVER commit)
+.env
+.env.*
+!.env.example
+# Local databases and storage
+*.db
+*.sqlite3
+.test_storage/
+storage/
+backend/storage/
+# Runtime setup tokens and local operational data
+setup_token.txt
+# Logs and local operational data
+*.log
+# Backups dumped locally (keep off-repo)
+/backups/
+# IDE
+.vscode/
+.idea/
+*.swp
