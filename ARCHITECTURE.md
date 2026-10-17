@@ -1,6 +1,6 @@
 ﻿# ARCHITECTURE.md â€” SCN College Accounting Application (Canonical, Rev 5)
 
-**Status:** CANONICAL PROPOSAL â€” Phase 0 Rev 5. No code implemented. No tests run.
+**Status:** Phase 1+2+3 partial (2026-10-17): 52 pytest pass; Phase 0 remains UNAPPROVED. Auth/RBAC/audit and periods/accounts implemented; voucher/posting pending.
 **Version:** Phase 0 Rev 5 â€” **Date:** 2026-10-15 (UTC)
 **Governs with:** `README.md`, `plan.md`, `DATABASE.md`, `PERMISSIONS.md`, `TESTING.md`
 **Frozen inputs:** `SCN_README.md`, `SCN_plan.md` (do not edit)
@@ -27,7 +27,7 @@ Browser (LAN) â†’ TLS (preferred; HTTP only behind LAN firewall) â†’ F
 3. APIâ†”storage: files outside web root, API-mediated audited downloads, SHA-256 in `attachments`, MIME/size validation at API + storage layers.
 4. LANâ†”outside: PostgreSQL not exposed; firewall allow-list; secrets in env only.
 
-## 4. Backend layout (proposal; created in Phase 1, no code yet)
+## 4. Backend layout (implemented for auth/audit/periods/accounts; voucher/posting modules pending)
 
 ```
 backend/app/{main.py, core/{config,security,permissions,logging_config},

@@ -1,6 +1,6 @@
 ﻿# DATABASE.md â€” SCN College Accounting Application (Canonical, Rev 5)
 
-**Status:** CANONICAL PROPOSAL â€” no tables, migrations, or database exist.
+**Status:** Phase 1+2+3 partial (2026-10-17): migrations 0001 (auth/audit) and 0002 (periods/accounts) implemented and verified by a downgrade/upgrade roundtrip on an isolated PG16 test DB; the full proposed schema is not yet built.
 **Version:** Phase 0 Rev 5 â€” **Date:** 2026-10-15 (UTC)
 **Governs with:** `README.md`, `plan.md`, `ARCHITECTURE.md`, `PERMISSIONS.md`, `TESTING.md`
 

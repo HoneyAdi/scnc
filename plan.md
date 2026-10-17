@@ -1,6 +1,6 @@
 ﻿# plan.md â€” SCN College Accounting Application (Canonical Delivery Plan)
 
-**Status:** PHASE 0 Rev 5 â€” documentation only. No code, no migrations, no tests executed.
+**Status:** Phase 1+2+3 partial (2026-10-17): 52 pytest pass; Phase 0 remains UNAPPROVED. Auth/RBAC/audit and periods/accounts implemented; voucher/posting pending.
 **Version:** Phase 0 Rev 5 â€” **Date:** 2026-10-15 (UTC)
 **Canonical order:** Phase 0 â†’ 1 (foundation) â†’ 2 (auth) â†’ 3 (accounting) â†’ 4â€“10 as below. This order governs all docs.
 
@@ -12,8 +12,8 @@
 |---|---|---|---|
 | 0 | Requirements & architecture (this revision) | In review â€” not approved | This file + 5 canonical docs; no code |
 | 1 | Secure project foundation + authN/authZ foundation (built 2026-10-16) | Implemented + tested (16/16 pytest pass on isolated PG16 test DB; backend + frontend verified running; report in session log) | backend/, frontend/, alembic 0001, pytest 2026-10-16 |
-| 2 | AuthN/AuthZ, bootstrap, RBAC, sessions, audit | Planned | â€” |
-| 3 | Accounting foundation (COA, journal, periods, TB) + department/cost-centre dimension + cash/bank masters | Planned, gated on Phase 2 | â€” |
+| 2 | AuthN/AuthZ, bootstrap, RBAC, sessions, audit | Implemented + tested (partial; 2026-10-17 pytest pass) | backend/app + alembic 0001; backend/tests/test_{auth,rbac,security,audit,atomicity_migrations,setup_concurrency,admin_concurrency}.py |
+| 3 | Accounting foundation (COA, journal, periods, TB) + department/cost-centre dimension + cash/bank masters | Implemented + tested (partial: COA + periods only; journal/posting NOT built) | backend/app + alembic 0002; frontend Periods/Accounts; backend/tests/test_{periods,accounts}.py |
 | 4 | Students, enrollment history, fees, hostel accounting, opening receivables | Planned, gated on Phase 3 | â€” |
 | 5 | Six student documents | Planned, gated on Phase 4 | â€” |
 | 6 | Suppliers and payables | Planned, gated on Phase 3 | â€” |

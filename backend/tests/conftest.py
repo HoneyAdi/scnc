@@ -142,4 +142,10 @@ def superadmin(db: Session):
 
 
 def login_as(client: TestClient, username: str, password: str):
-    return client.post("/api/v1/auth/login", json={"username": username, "password": password})
+    # Browsers always send Origin on POST; the app requires it whenever a
+    # session cookie is already present (re-login / switching user).
+    return client.post(
+        "/api/v1/auth/login",
+        json={"username": username, "password": password},
+        headers={"Origin": "http://testserver"},
+    )

@@ -40,6 +40,7 @@ def test_forbidden_without_permission(client, db):
     r = client.post(
         "/api/v1/admin/users",
         json={"username": "x", "password": "Xx1234567890!", "roles": []},
+        headers={"Origin": "http://testserver"},
     )
     assert r.status_code == 403
     # But the permitted endpoint works.
@@ -53,6 +54,7 @@ def test_superadmin_user_lifecycle(client, superadmin):
     r = client.post(
         "/api/v1/admin/users",
         json={"username": "clerk1", "password": "ClerkPass1234!", "roles": []},
+        headers={"Origin": "http://testserver"},
     )
     assert r.status_code == 201, r.text
     uid = r.json()["id"]
@@ -65,16 +67,17 @@ def test_superadmin_user_lifecycle(client, superadmin):
     r = client.post(
         "/api/v1/admin/users",
         json={"username": "clerk2", "password": "ClerkPass1234!", "roles": ["NoSuchRole"]},
+        headers={"Origin": "http://testserver"},
     )
     assert r.status_code == 400
 
     # Creator cannot deactivate themselves.
     me = client.get("/api/v1/me").json()
-    r = client.post(f"/api/v1/admin/users/{me['id']}/deactivate")
+    r = client.post(f"/api/v1/admin/users/{me['id']}/deactivate", headers={"Origin": "http://testserver"})
     assert r.status_code == 400
 
     # Deactivate the clerk; their sessions die immediately.
-    r = client.post(f"/api/v1/admin/users/{uid}/deactivate")
+    r = client.post(f"/api/v1/admin/users/{uid}/deactivate", headers={"Origin": "http://testserver"})
     assert r.status_code == 200
     assert r.json()["is_active"] is False
 
@@ -83,7 +86,7 @@ def test_last_super_admin_protected(client, superadmin, db):
     login_as(client, "root_tester", "CorrectHorse12!")
     me = client.get("/api/v1/me").json()
     # Only one active Super Admin exists: deactivation must be refused.
-    r = client.post(f"/api/v1/admin/users/{me['id']}/deactivate")
+    r = client.post(f"/api/v1/admin/users/{me['id']}/deactivate", headers={"Origin": "http://testserver"})
     assert r.status_code == 400
 
     # With a second Super Admin present, deactivating one succeeds.
@@ -96,7 +99,7 @@ def test_last_super_admin_protected(client, superadmin, db):
     # With a second Super Admin present, deactivating the OTHER admin succeeds.
     r = login_as(client, "root2", "Root2Pass1234!")
     assert r.status_code == 200
-    r = client.post(f"/api/v1/admin/users/{me['id']}/deactivate")
+    r = client.post(f"/api/v1/admin/users/{me['id']}/deactivate", headers={"Origin": "http://testserver"})
     assert r.status_code == 200
     assert r.json()["is_active"] is False
 
@@ -105,7 +108,7 @@ def test_deactivated_user_cannot_login(client, db, superadmin):
     _make_user(db, "temp1", "TempPass12345!", None)
     login_as(client, "root_tester", "CorrectHorse12!")
     target = db.execute(select(User).where(User.username == "temp1")).scalar_one()
-    r = client.post(f"/api/v1/admin/users/{target.id}/deactivate")
+    r = client.post(f"/api/v1/admin/users/{target.id}/deactivate", headers={"Origin": "http://testserver"})
     assert r.status_code == 200
     # Deactivated accounts cannot authenticate at all.
     r = login_as(client, "temp1", "TempPass12345!")
@@ -127,7 +130,7 @@ def test_live_session_dies_on_deactivation(client, db, superadmin):
     # Super Admin deactivates live1 (revokes all sessions in the same transaction).
     login_as(client, "root_tester", "CorrectHorse12!")
     target = db.execute(select(User).where(User.username == "live1")).scalar_one()
-    assert client.post(f"/api/v1/admin/users/{target.id}/deactivate").status_code == 200
+    assert client.post(f"/api/v1/admin/users/{target.id}/deactivate", headers={"Origin": "http://testserver"}).status_code == 200
     # Every live1 session row is revoked, and the previously valid token no longer validates.
     remaining = db.execute(
         select(DbSession).where(
@@ -165,6 +168,7 @@ def test_failed_user_create_leaves_nothing(client, db, superadmin, app_engine):
     r = client.post(
         "/api/v1/admin/users",
         json={"username": "halfMade", "password": "HalfMadePass1!", "roles": ["NoSuchRole"]},
+        headers={"Origin": "http://testserver"},
     )
     assert r.status_code == 400
     assert committed_counts() == before
@@ -178,13 +182,14 @@ def test_system_super_admin_role_is_untouchable(client, db, superadmin):
 
     login_as(client, "root_tester", "CorrectHorse12!")
     # No modification/removal endpoints exist for roles.
-    assert client.put("/api/v1/admin/roles/1", json={}).status_code == 404
-    assert client.delete("/api/v1/admin/roles/1").status_code in (404, 405)
-    assert client.patch("/api/v1/admin/roles/1", json={}).status_code in (404, 405)
+    assert client.put("/api/v1/admin/roles/1", json={}, headers={"Origin": "http://testserver"}).status_code == 404
+    assert client.delete("/api/v1/admin/roles/1", headers={"Origin": "http://testserver"}).status_code in (404, 405)
+    assert client.patch("/api/v1/admin/roles/1", json={}, headers={"Origin": "http://testserver"}).status_code in (404, 405)
     # A duplicate "Super Admin" role cannot be smuggled in.
     r = client.post(
         "/api/v1/admin/roles",
         json={"name": "Super Admin", "description": "fake", "permissions": []},
+        headers={"Origin": "http://testserver"},
     )
     assert r.status_code == 400
     role = db.execute(select(Role).where(Role.name == "Super Admin")).scalar_one()
@@ -203,6 +208,7 @@ def test_role_create_requires_permission_and_is_audited(client, db):
     r = client.post(
         "/api/v1/admin/roles",
         json={"name": "Sneaky", "description": "", "permissions": []},
+        headers={"Origin": "http://testserver"},
     )
     assert r.status_code == 403
     assert db.execute(select(AuditLog).where(AuditLog.action == "role.create")).all() == []

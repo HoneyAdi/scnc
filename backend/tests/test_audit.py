@@ -14,6 +14,7 @@ def test_audit_events_and_chain(client, db, superadmin):
     client.post(
         "/api/v1/admin/users",
         json={"username": "audited1", "password": "AuditedPass12!", "roles": []},
+        headers={"Origin": "http://testserver"},
     )
     r = client.get("/api/v1/admin/audit-log")
     assert r.status_code == 200

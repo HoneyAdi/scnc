@@ -53,7 +53,7 @@ def test_setup_and_login_flow(client, db):
     assert r.json()["username"] == "first_admin"
 
     # Logout revokes the session: the same cookie is then rejected.
-    r = client.post("/api/v1/auth/logout")
+    r = client.post("/api/v1/auth/logout", headers={"Origin": "http://testserver"})
     assert r.status_code == 200
     r = client.get("/api/v1/me")
     assert r.status_code == 401

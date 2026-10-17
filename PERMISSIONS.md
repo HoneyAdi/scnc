@@ -1,6 +1,6 @@
 ﻿# PERMISSIONS.md â€” SCN College Accounting Application (Canonical, Rev 5)
 
-**Status:** CANONICAL PROPOSAL â€” no users, roles, or enforcement exist.
+**Status:** Phase 1+2+3 partial (2026-10-17): RBAC roles/permissions, sessions, and the last-active-Super-Admin guard are implemented and enforced server-side with passing pytest; voucher approval workflows are not yet built.
 **Version:** Phase 0 Rev 5 â€” **Date:** 2026-10-15 (UTC)
 **Governs with:** `README.md`, `plan.md`, `ARCHITECTURE.md`, `DATABASE.md`, `TESTING.md`
 

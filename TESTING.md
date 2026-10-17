@@ -1,6 +1,6 @@
 ﻿# TESTING.md â€” SCN College Accounting Application (Canonical, Rev 5)
 
-**Status:** CANONICAL PROPOSAL â€” no tests exist; none executed.
+**Status:** Phase 1+2+3 partial (2026-10-17): 52 pytest cases pass on an isolated PG16 test DB (auth, RBAC, audit, security/CSRF, atomicity, concurrency, periods, accounts); voucher/posting suites remain Planned.
 **Version:** Phase 0 Rev 5 â€” **Date:** 2026-10-15 (UTC)
 **Governs with:** `README.md`, `plan.md`, `ARCHITECTURE.md`, `DATABASE.md`, `PERMISSIONS.md`
 

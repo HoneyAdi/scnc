@@ -35,6 +35,7 @@ def _period(client, code="FY26-27", starts="2026-04-01", ends="2027-03-31", name
     return client.post(
         "/api/v1/periods",
         json={"code": code, "name": name, "starts_on": starts, "ends_on": ends},
+        headers={"Origin": "http://testserver"},
     )
 
 
@@ -49,16 +50,16 @@ def test_period_lifecycle(client, db, superadmin):
     assert r.status_code == 200
     assert any(p["code"] == "FY26-27" for p in r.json())
 
-    r = client.post(f"/api/v1/periods/{pid}/close")
+    r = client.post(f"/api/v1/periods/{pid}/close", headers={"Origin": "http://testserver"})
     assert r.status_code == 200, r.text
     assert r.json()["status"] == "closed"
     assert r.json()["closed_by"] is not None
 
     # Closing twice is rejected; closed periods have no edit/reopen endpoint.
-    assert client.post(f"/api/v1/periods/{pid}/close").status_code == 409
-    assert client.put(f"/api/v1/periods/{pid}", json={}).status_code == 404
-    assert client.patch(f"/api/v1/periods/{pid}", json={}).status_code in (404, 405)
-    assert client.delete(f"/api/v1/periods/{pid}").status_code in (404, 405)
+    assert client.post(f"/api/v1/periods/{pid}/close", headers={"Origin": "http://testserver"}).status_code == 409
+    assert client.put(f"/api/v1/periods/{pid}", json={}, headers={"Origin": "http://testserver"}).status_code == 404
+    assert client.patch(f"/api/v1/periods/{pid}", json={}, headers={"Origin": "http://testserver"}).status_code in (404, 405)
+    assert client.delete(f"/api/v1/periods/{pid}", headers={"Origin": "http://testserver"}).status_code in (404, 405)
 
 
 def test_period_validation(client, db, superadmin):
@@ -75,7 +76,7 @@ def test_period_validation(client, db, superadmin):
     # Adjacent (non-overlapping) range is accepted.
     assert _period(client, code="NEXT", starts="2027-04-01", ends="2028-03-31").status_code == 201
     # Closing a missing period conflicts cleanly.
-    assert client.post("/api/v1/periods/99999/close").status_code == 409
+    assert client.post("/api/v1/periods/99999/close", headers={"Origin": "http://testserver"}).status_code == 409
 
 
 def test_period_permissions(client, db):
@@ -87,8 +88,9 @@ def test_period_permissions(client, db):
     assert client.post(
         "/api/v1/periods",
         json={"code": "NOP", "name": "n", "starts_on": "2030-04-01", "ends_on": "2031-03-31"},
+        headers={"Origin": "http://testserver"},
     ).status_code == 403
-    assert client.post("/api/v1/periods/1/close").status_code == 403
+    assert client.post("/api/v1/periods/1/close", headers={"Origin": "http://testserver"}).status_code == 403
     # Unauthenticated requests are rejected.
     c2 = client
     c2.cookies.clear()
@@ -106,7 +108,7 @@ def test_period_creation_audited(client, db, superadmin):
         select(AuditLog).where(AuditLog.action.in_(["period.create", "period.close"]))
     ).all()
     assert any(e.action == "period.create" for e in [x[0] for x in rows])
-    r = client.post(f"/api/v1/periods/{pid}/close")
+    r = client.post(f"/api/v1/periods/{pid}/close", headers={"Origin": "http://testserver"})
     assert r.status_code == 200
     rows = db.execute(
         select(AuditLog).where(AuditLog.action == "period.close")
@@ -167,6 +169,7 @@ def test_concurrent_overlapping_periods_single_win():
                         "code": code, "name": code,
                         "starts_on": "2031-04-01", "ends_on": "2032-03-31",
                     },
+                    headers={"Origin": "http://testserver"},
                 ).status_code
             finally:
                 c.close()

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.main import create_app
 from app.models.accounting import Account
 from app.models.auth import AuditLog, SystemSetting, User, UserRole
+from app.models.auth import Session as DbSession
 from tests.conftest import login_as
 
 RID = f"{os.getpid()}{uuid.uuid4().hex[:6]}"
@@ -19,7 +20,7 @@ def _acct(client, code="1000", name="Cash", type="asset", parent_id=None, desc="
     body = {"code": code, "name": name, "type": type, "description": desc}
     if parent_id is not None:
         body["parent_id"] = parent_id
-    return client.post("/api/v1/accounts", json=body)
+    return client.post("/api/v1/accounts", json=body, headers={"Origin": "http://testserver"})
 
 
 def test_account_crud_and_hierarchy(client, db, superadmin):
@@ -36,13 +37,13 @@ def test_account_crud_and_hierarchy(client, db, superadmin):
     assert {a["code"] for a in items} >= {"1000", "1100"}
 
     # Deactivate preserves the record.
-    r = client.patch(f"/api/v1/accounts/{child_id}", json={"is_active": False})
+    r = client.patch(f"/api/v1/accounts/{child_id}", json={"is_active": False}, headers={"Origin": "http://testserver"})
     assert r.status_code == 200
     assert r.json()["is_active"] is False
     assert any(a["code"] == "1100" for a in client.get("/api/v1/accounts").json()["items"])
 
     # No delete endpoint exists.
-    assert client.delete(f"/api/v1/accounts/{child_id}").status_code in (404, 405)
+    assert client.delete(f"/api/v1/accounts/{child_id}", headers={"Origin": "http://testserver"}).status_code in (404, 405)
 
 
 def test_account_validation(client, db, superadmin):
@@ -56,10 +57,10 @@ def test_account_validation(client, db, superadmin):
     # Type mismatch with parent is rejected.
     assert _acct(client, code="C1", name="Child Exp", type="expense", parent_id=parent["id"]).status_code == 400
     # Inactive parent is rejected.
-    client.patch(f"/api/v1/accounts/{parent['id']}", json={"is_active": False})
+    client.patch(f"/api/v1/accounts/{parent['id']}", json={"is_active": False}, headers={"Origin": "http://testserver"})
     assert _acct(client, code="C2", name="Child", type="asset", parent_id=parent["id"]).status_code == 400
     # Unknown account edit is rejected, not created.
-    assert client.patch("/api/v1/accounts/99999", json={"name": "x"}).status_code == 400
+    assert client.patch("/api/v1/accounts/99999", json={"name": "x"}, headers={"Origin": "http://testserver"}).status_code == 400
 
 
 def test_account_cycle_rejected(client, db, superadmin):
@@ -117,9 +118,10 @@ def test_concurrent_duplicate_account_code_single_win():
     try:
         with Session(engine) as s:
             s.execute(delete(AuditLog))
+            s.execute(delete(DbSession))
             s.execute(delete(UserRole))
-            s.execute(delete(User))
             s.execute(delete(Account))
+            s.execute(delete(User))
             s.execute(delete(SystemSetting))
             s.commit()
 
@@ -146,6 +148,7 @@ def test_concurrent_duplicate_account_code_single_win():
                     json={
                         "code": "DUP_" + RID, "name": "Dup", "type": "asset",
                     },
+                    headers={"Origin": "http://testserver"},
                 ).status_code
             finally:
                 c.close()
@@ -158,9 +161,10 @@ def test_concurrent_duplicate_account_code_single_win():
     finally:
         with Session(engine) as s:
             s.execute(delete(AuditLog))
+            s.execute(delete(DbSession))
             s.execute(delete(UserRole))
-            s.execute(delete(User))
             s.execute(delete(Account))
+            s.execute(delete(User))
             s.execute(delete(SystemSetting))
             s.commit()
         engine.dispose()
