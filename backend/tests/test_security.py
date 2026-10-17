@@ -20,6 +20,34 @@ def test_cross_origin_post_rejected(client, superadmin):
     assert r.status_code == 403
 
 
+def test_origin_matrix(client, superadmin):
+    """Scheme, host, and effective port are all compared — hostname alone is
+    never sufficient. TestClient speaks http://testserver (effective port 80)."""
+    from tests.conftest import login_as
+
+    login_as(client, "root_tester", "CorrectHorse12!")
+    payload = {"username": "uum", "password": "UumPass123456!", "roles": []}
+
+    def post_as(headers):
+        return client.post("/api/v1/admin/users", json=payload, headers=headers)
+
+    # Different scheme, same host: rejected.
+    assert post_as({"Origin": "https://testserver"}).status_code == 403
+    # Different port, same scheme+host: rejected.
+    assert post_as({"Origin": "http://testserver:9999"}).status_code == 403
+    # Different host: rejected.
+    assert post_as({"Origin": "http://other.test"}).status_code == 403
+    # Explicit default port matching the effective port: allowed (same origin).
+    assert post_as({"Origin": "http://testserver:80"}).status_code in (201, 400)
+    # Malformed Origin present: fail closed.
+    assert post_as({"Origin": "not-a-url###"}).status_code == 403
+    assert post_as({"Origin": "ftp://testserver/x"}).status_code == 403
+    # Allowed deployment origin from CORS_ORIGINS with correct triple: allowed.
+    assert post_as({"Origin": "http://localhost:5173"}).status_code in (201, 400)
+    # Same triple via Referer (no Origin): allowed.
+    assert post_as({"Referer": "http://testserver/some/page"}).status_code in (201, 400)
+
+
 def test_same_origin_and_absent_origin_allowed(client, superadmin):
     from tests.conftest import login_as
 

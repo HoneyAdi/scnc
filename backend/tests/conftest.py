@@ -26,13 +26,73 @@ os.environ["STORAGE_ROOT"] = "/tmp/scnc_test_storage" if os.name != "nt" else (
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, or_
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
 from app.main import create_app
 
 APP_ROLE = "scnc_app_test"
+# Session-level advisory lock: two full-suite runs must never share one
+# disposable database (row-lock contention + committed-state races produce
+# deadlocks and phantom failures). Second runner exits immediately.
+SUITE_LOCK_KEY = "scnc_pytest_suite"
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _single_runner(app_engine):
+    from sqlalchemy import text
+
+    conn = app_engine.connect()
+    try:
+        free = conn.execute(
+            text("SELECT pg_try_advisory_lock(hashtext(:k))"), {"k": SUITE_LOCK_KEY}
+        ).scalar()
+        if not free:
+            conn.close()
+            pytest.exit("another pytest run holds the suite lock on this test database")
+        yield conn
+    finally:
+        try:
+            conn.execute(text("SELECT pg_advisory_unlock(hashtext(:k))"), {"k": SUITE_LOCK_KEY})
+        finally:
+            conn.close()
+
+
+# Real-commit tests use usernames starting with one of these prefixes plus a
+# per-run unique suffix (pid + randomness), so two suite runs — concurrent or
+# crashed-and-rerun — can never share rows. The session fixture removes any
+# leftovers (including from runs killed mid-flight) before tests start.
+# Disposable test database only; these patterns must never match real users.
+SCRUB_LIKE_PREFIXES = (
+    "atomic%", "stress_actor%", "concA%", "concB%", "concC%", "ppcA%", "ppcB%", "raceadmin%",
+)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _clean_slate(app_engine, _single_runner):
+    from sqlalchemy import delete, select
+    from sqlalchemy.orm import Session as SaSession
+
+    from app.models.accounting import FinancialPeriod
+    from app.models.auth import AuditLog
+    from app.models.auth import Session as DbSession
+    from app.models.auth import User, UserRole
+
+    with SaSession(bind=app_engine.connect()) as s:
+        user_clauses = [User.username.like(p) for p in SCRUB_LIKE_PREFIXES]
+        ids = s.execute(
+            select(User.id).where(or_(*user_clauses))
+        ).scalars().all()
+        if ids:
+            s.execute(delete(AuditLog).where(AuditLog.actor_id.in_(ids)))
+            s.execute(delete(DbSession).where(DbSession.user_id.in_(ids)))
+            s.execute(delete(FinancialPeriod).where(FinancialPeriod.created_by.in_(ids)))
+            s.execute(delete(UserRole).where(UserRole.user_id.in_(ids)))
+            s.execute(delete(User).where(User.id.in_(ids)))
+            s.execute(delete(AuditLog).where(AuditLog.action.like("stress.%")))
+            s.commit()
+    yield
 
 
 @pytest.fixture(scope="session")

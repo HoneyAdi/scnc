@@ -50,3 +50,23 @@ class AuditOut(BaseModel):
     details: dict | None
     prev_hash: str
     hash: str
+
+
+class CreatePeriodRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=32)
+    name: str = Field(min_length=1, max_length=128)
+    starts_on: str
+    ends_on: str
+
+
+class CreateAccountRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=32)
+    name: str = Field(min_length=1, max_length=128)
+    type: str
+    parent_id: int | None = None
+    description: str = Field(default="", max_length=500)
+
+
+class UpdateAccountRequest(BaseModel):
+    name: str | None = Field(default=None, max_length=128)
+    is_active: bool | None = None

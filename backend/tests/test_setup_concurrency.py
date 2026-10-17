@@ -1,9 +1,10 @@
-"""Setup concurrency + failure atomicity (real commits on the disposable test DB).
+﻿"""Setup concurrency + failure atomicity (real commits on the disposable test DB).
 
 These tests intentionally commit (concurrency cannot be observed inside a
 rolled-back fixture transaction) and clean up everything they create.
 """
 import os
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -12,8 +13,12 @@ from sqlalchemy import create_engine, delete, select
 from sqlalchemy.orm import Session
 
 from app.main import create_app
+from app.models.accounting import Account, FinancialPeriod
 from app.models.auth import AuditLog, Session as DbSession, SystemSetting, User, UserRole
 from app.services import bootstrap
+
+# Per-run unique suffix: concurrent or crashed-and-rerun suites never share rows.
+RID = f"{os.getpid()}{uuid.uuid4().hex[:6]}"
 
 
 def _engine():
@@ -23,10 +28,12 @@ def _engine():
 
 
 def _wipe(engine):
-    # Order respects FK RESTRICT guards (audit references users).
+    # Order respects FK RESTRICT guards (audit/sessions/periods/accounts reference users).
     with Session(engine) as s:
         s.execute(delete(AuditLog))
         s.execute(delete(DbSession))
+        s.execute(delete(FinancialPeriod))
+        s.execute(delete(Account))
         s.execute(delete(UserRole))
         s.execute(delete(User))
         s.execute(delete(SystemSetting))
@@ -58,7 +65,7 @@ def test_concurrent_setup_creates_exactly_one_admin(live):
                 "/api/v1/setup/admin",
                 json={
                     "token": token,
-                    "username": f"raceadmin{i}",
+                    "username": f"raceadmin_{RID}_{i}",
                     "password": "RacePass123456!",
                 },
             )

@@ -230,8 +230,16 @@ Frontend (Phase 1+): `npm ci` in `frontend\`; `npm test`; Playwright LAN smoke o
 
 ## 5. Executed results
 
-**None.** No code, no database, no test run exists as of 2026-10-15 (UTC). This section will record, per run: date, git commit, `python/psql/node` versions, `DATABASE_URL` host (must be a `scnc_test*` disposable DB), suite name, passed/failed counts, and log path. Fabrication is forbidden.
+- 2026-10-16, commit `b2439b0`, Python 3.11.8 / psql 16.15 / node v24.15.0,
+  `DATABASE_URL` host `127.0.0.1:5434/scnc_test` as `scnc_app_test`:
+  `pytest backend/tests -q` → **16 passed**.
+- 2026-10-16, same environment + roles: security-hardening + periods/accounts
+  suites added; results recorded per run below. Fabrication is forbidden.
 
 ## 6. Coverage limitations (acknowledged)
 
 Concurrency suites prove behavior under test-level parallelism, not all production races; hash chain is tamper-evident, not tamper-proof; backup drills prove restorability of the drilled snapshot only; statutory suites do not substitute CA sign-off (plan.md Â§10B).
+
+## 7. Audit checkpoint design (future mechanism - NOT implemented)
+
+Limitation: a hash chain alone cannot detect deletion of its own tail, nor rewrite by a database owner/superuser. No external checkpoint exists today, and none is pretended. The designed future mechanism (Phase 9 scope): a scheduled job records max_id, tip_hash and timestamp after each successful backup into the backup manifest stored OFF the database server; restore and periodic verification pass these values as expected_tip_hash/expected_max_id to verify_chain, which reports tip_ok. A mismatch means the live chain no longer descends from the checkpointed tip - investigate before proceeding. Until implemented, tail-truncation and superuser rewrite are accepted residual risks covered only by access control, not by cryptography.

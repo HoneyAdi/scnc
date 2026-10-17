@@ -33,6 +33,8 @@ export default function Layout() {
           {can("users.view") && <Link to="/users">Users</Link>}
           {can("roles.view") && <Link to="/roles">Roles</Link>}
           {can("audit.view") && <Link to="/audit">Audit log</Link>}
+          {can("periods.view") && <Link to="/periods">Periods</Link>}
+          {can("accounts.view") && <Link to="/accounts">Accounts</Link>}
         </nav>
         <span style={{ marginLeft: "auto" }}>
           {user.username} <button onClick={() => logout().then(() => navigate("/login"))}>Log out</button>

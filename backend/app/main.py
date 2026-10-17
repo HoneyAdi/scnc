@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.api.csrf import OriginCheckMiddleware
-from app.api.v1 import admin_audit, admin_roles, admin_users, auth, setup
+from app.api.v1 import admin_audit, admin_roles, admin_users, accounts, auth, periods, setup
 from app.core import logging_config
 from app.core.config import get_settings
 from app.core.logging_config import logger
@@ -88,6 +88,8 @@ def create_app() -> FastAPI:
     app.include_router(admin_users.router, prefix=prefix)
     app.include_router(admin_roles.router, prefix=prefix)
     app.include_router(admin_audit.router, prefix=prefix)
+    app.include_router(periods.router, prefix=prefix)
+    app.include_router(accounts.router, prefix=prefix)
     return app
 
 

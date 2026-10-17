@@ -4,6 +4,8 @@ import Layout, { Dashboard } from "./pages/Layout";
 import LoginPage from "./pages/Login";
 import UsersPage from "./pages/Users";
 import RolesPage, { AuditPage } from "./pages/Roles";
+import PeriodsPage from "./pages/Periods";
+import AccountsPage from "./pages/Accounts";
 
 export default function App() {
   return (
@@ -16,6 +18,8 @@ export default function App() {
             <Route path="/users" element={<UsersPage />} />
             <Route path="/roles" element={<RolesPage />} />
             <Route path="/audit" element={<AuditPage />} />
+            <Route path="/periods" element={<PeriodsPage />} />
+            <Route path="/accounts" element={<AccountsPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

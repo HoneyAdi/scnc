@@ -1,3 +1,4 @@
+from app.models.accounting import Account, FinancialPeriod
 from app.models.auth import (
     AuditLog,
     Permission,
@@ -10,7 +11,9 @@ from app.models.auth import (
 )
 
 __all__ = [
+    "Account",
     "AuditLog",
+    "FinancialPeriod",
     "Permission",
     "Role",
     "RolePermission",

@@ -1,6 +1,12 @@
-"""Audit trail: events are written for relevant actions and the hash chain verifies."""
+﻿"""Audit trail: events are written for relevant actions and the hash chain verifies."""
+import os
+import uuid
+
 from app.services import audit_service
 from tests.conftest import login_as
+
+# Per-run unique suffix for real-commit usernames (see conftest scrub prefixes).
+RID = f"{os.getpid()}{uuid.uuid4().hex[:6]}"
 
 
 def test_audit_events_and_chain(client, db, superadmin):
@@ -37,17 +43,17 @@ def test_concurrent_audit_appends_keep_single_chain(client, db, superadmin, app_
         from sqlalchemy import delete
 
         s.execute(delete(AuditLog).where(AuditLog.action.like("stress.%")))
-        s.execute(delete(User).where(User.username == "stress_actor"))
+        s.execute(delete(User).where(User.username == "stress_actor_" + RID))
         s.commit()
 
     # Concurrent writers use their own committed connections, so the actor must
     # exist in COMMITTED state (the rollback-isolated fixture user is invisible
-    # to them — which is exactly what the FK guard is supposed to enforce).
+    # to them â€” which is exactly what the FK guard is supposed to enforce).
     setup_conn = app_engine.connect()
     try:
         with SaSession(bind=setup_conn) as s:
             _scrub(s)
-            actor = User(username="stress_actor", password_hash=hash_password("StressPass1234!"))
+            actor = User(username="stress_actor_" + RID, password_hash=hash_password("StressPass1234!"))
             s.add(actor)
             s.commit()
             actor_id = actor.id
@@ -99,7 +105,7 @@ def test_concurrent_audit_appends_keep_single_chain(client, db, superadmin, app_
         try:
             with SaSession(bind=cleanup) as s:
                 s.execute(delete(AuditLog).where(AuditLog.action.like("stress.%")))
-                s.execute(delete(User).where(User.username == "stress_actor"))
+                s.execute(delete(User).where(User.username == "stress_actor_" + RID))
                 s.commit()
         finally:
             cleanup.close()
@@ -123,6 +129,77 @@ def test_tampered_record_reports_first_bad_id(client, db, superadmin):
     report = audit_service.verify_chain(db)
     assert report["ok"] is False
     assert report["first_bad_id"] == victim.id
+
+
+def test_tampering_any_covered_field_invalidates(client, db, superadmin):
+    """Every immutable field in the format-2 payload is hash-covered."""
+    import datetime as dt
+
+    from sqlalchemy import select, update
+
+    from app.models.auth import AuditLog
+
+    audit_service.log_event(
+        db, actor_id=superadmin.id, action="cov.one", entity="cov",
+        entity_id="7", details={"k": "v"},
+    )
+    db.commit()
+    row = db.execute(select(AuditLog).order_by(AuditLog.id.desc()).limit(1)).scalar_one()
+    target_id = row.id
+    tamperings = [
+        ("action", {"action": "cov.FORGED"}),
+        ("entity", {"entity": "forged"}),
+        ("entity_id", {"entity_id": "forged"}),
+        ("details", {"details": {"k": "FORGED"}}),
+        ("prev_hash", {"prev_hash": "0" * 64}),
+        ("created_at", {"created_at": dt.datetime(2001, 1, 1, tzinfo=dt.timezone.utc)}),
+    ]
+    for label, tamper in tamperings:
+        db.execute(update(AuditLog).where(AuditLog.id == target_id).values(**tamper))
+        db.commit()
+        report = audit_service.verify_chain(db)
+        assert report["ok"] is False, label
+        assert report["first_bad_id"] == target_id, label
+        db.rollback()
+    # actor_id tampering is stopped even earlier: the foreign key rejects a
+    # non-existent actor outright (defense in depth alongside hashing).
+    from sqlalchemy.exc import IntegrityError
+
+    try:
+        db.execute(update(AuditLog).where(AuditLog.id == target_id).values(actor_id=424242))
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+    else:
+        db.rollback()
+        raise AssertionError("forged actor_id should violate the users FK")
+
+
+def test_legacy_format_rows_still_verify(client, db, superadmin):
+    """Pre-format-2 rows verify via the legacy payload and are counted, not failed."""
+    import hashlib
+    import json
+
+    from sqlalchemy import select
+
+    from app.models.auth import AuditLog
+    from app.services.audit_service import GENESIS, _canonical_v1
+
+    body = _canonical_v1("old.op", "old", "1", {"legacy": True})
+    digest = hashlib.sha256((GENESIS + body).encode()).hexdigest()
+    db.add(
+        AuditLog(
+            actor_id=superadmin.id, action="old.op", entity="old", entity_id="1",
+            details={"legacy": True}, prev_hash=GENESIS, hash=digest,
+        )
+    )
+    db.commit()
+    audit_service.log_event(db, actor_id=superadmin.id, action="new.op", entity="new")
+    db.commit()
+    report = audit_service.verify_chain(db)
+    assert report["ok"] is True, report
+    assert report["complete"] is True
+    assert report["legacy_format_count"] == 1
 
 
 def test_deleted_record_breaks_successor_link(client, db, superadmin):
@@ -153,6 +230,42 @@ def test_limited_scan_reports_incomplete(client, db, superadmin):
     assert report["complete"] is False
     full = audit_service.verify_chain(db)
     assert full["complete"] is True
+
+
+def test_tail_truncation_invisible_without_checkpoint(client, db, superadmin):
+    """Documents the honest limitation: deleting the FINAL row leaves a
+    shorter but internally consistent chain, which verifies ok=True."""
+    from sqlalchemy import delete, select
+
+    from app.models.auth import AuditLog
+
+    audit_service.log_event(db, actor_id=superadmin.id, action="d.one", entity="t")
+    audit_service.log_event(db, actor_id=superadmin.id, action="d.two", entity="t")
+    db.commit()
+    tip = db.execute(select(AuditLog).order_by(AuditLog.id.desc()).limit(1)).scalar_one()
+    tip_hash, tip_id = tip.hash, tip.id
+    db.execute(delete(AuditLog).where(AuditLog.id == tip_id))
+    db.commit()
+    # Chain alone cannot see the missing tail.
+    assert audit_service.verify_chain(db)["ok"] is True
+    # An external checkpoint (tip hash + max id) detects it precisely.
+    anchored = audit_service.verify_chain(
+        db, expected_tip_hash=tip_hash, expected_max_id=tip_id
+    )
+    assert anchored["ok"] is False
+    assert anchored["tip_ok"] is False
+    assert anchored["first_bad_id"] is None  # no internal break: links are intact
+    # And a correct anchor passes.
+    db.execute(delete(AuditLog))
+    db.commit()
+    audit_service.log_event(db, actor_id=superadmin.id, action="d.uno", entity="t")
+    db.commit()
+    now_tip = db.execute(select(AuditLog).order_by(AuditLog.id.desc()).limit(1)).scalar_one()
+    good = audit_service.verify_chain(
+        db, expected_tip_hash=now_tip.hash, expected_max_id=now_tip.id
+    )
+    assert good["ok"] is True
+    assert good["tip_ok"] is True
 
 
 def test_audit_view_requires_permission(client, db):

@@ -96,7 +96,9 @@ def authenticate(db: DbSession, username: str, password: str, ip: str | None) ->
         if user.failed_logins >= settings.MAX_LOGIN_ATTEMPTS:
             user.locked_until = now + dt.timedelta(minutes=settings.LOCKOUT_MINUTES)
         db.add(user)
-        db.commit()
+        db.flush()
+        # Single commit for state change + audit: if the audit write fails, the
+        # counter increment rolls back with it — never a partial login state.
         audit_service.log_event(
             db, actor_id=user.id, action="login.failed", entity="users", entity_id=user.id,
             details={"ip": ip},
@@ -115,7 +117,9 @@ def authenticate(db: DbSession, username: str, password: str, ip: str | None) ->
         )
     )
     db.add(user)
-    db.commit()
+    db.flush()
+    # Single commit for session creation + audit: a failed audit write cannot
+    # leave a usable session without its creation record.
     audit_service.log_event(
         db, actor_id=user.id, action="login.success", entity="sessions", details={"ip": ip}
     )
