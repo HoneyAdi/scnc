@@ -8,11 +8,13 @@ Policy:
 - The request is allowed when its Origin (preferred) or Referer triple equals
   EITHER the request's own triple (same-origin) OR one of the configured
   trusted origins (`CORS_ORIGINS`, e.g. a LAN frontend on another host).
-- Absent Origin AND Referer means a non-browser API client: allowed, because
-  blocking absent headers would break legitimate API use without adding real
-  CSRF protection (attackers cannot suppress headers the browser always sends
-  on cross-site form/fetch POSTs). Browser cookie sessions additionally carry
-  SameSite=Lax; production must serve over TLS (see startup gate).
+- Browser cookie-authenticated requests (session cookie present) MUST include
+  a valid Origin or Referer header. Missing headers on a cookie-authenticated
+  request are rejected (403): the browser always sends these on cross-site
+  form/fetch POSTs, so their absence on a cookie request is anomalous.
+- Non-browser API clients (Bearer token, no session cookie) are allowed
+  without Origin/Referer: they cannot be CSRF-targeted because they do not
+  carry ambient browser credentials.
 - A PRESENT but malformed/unparseable Origin or Referer is rejected (403):
   fail closed rather than guessing.
 """
@@ -62,9 +64,11 @@ class OriginCheckMiddleware(BaseHTTPMiddleware):
             presented = parse_origin(request.headers.get("referer"))
         if presented is None:
             if request.headers.get("origin") is not None or request.headers.get("referer") is not None:
-                # Header present but malformed: fail closed.
                 return JSONResponse(status_code=403, content={"detail": "Origin not allowed."})
-            return await call_next(request)  # non-browser API client
+            settings = get_settings()
+            if request.cookies.get(settings.SESSION_COOKIE_NAME):
+                return JSONResponse(status_code=403, content={"detail": "Origin not allowed."})
+            return await call_next(request)
         scheme = request.url.scheme.lower()
         host = (request.url.hostname or "").lower()
         port = request.url.port or _DEFAULT_PORTS.get(scheme, 0)

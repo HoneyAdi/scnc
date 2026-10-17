@@ -1,9 +1,18 @@
 """Chart of accounts: uniqueness, hierarchy, permissions, audit, rollback."""
-from sqlalchemy import select
+import os
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, delete, select
+from sqlalchemy.orm import Session
+
+from app.main import create_app
 from app.models.accounting import Account
-from app.models.auth import AuditLog
+from app.models.auth import AuditLog, SystemSetting, User, UserRole
 from tests.conftest import login_as
+
+RID = f"{os.getpid()}{uuid.uuid4().hex[:6]}"
 
 
 def _acct(client, code="1000", name="Cash", type="asset", parent_id=None, desc=""):
@@ -95,3 +104,63 @@ def test_failed_account_create_rolls_back(client, db, superadmin):
     assert r.status_code == 400
     # Service-level failure commits nothing (asserted on a fresh connection).
     assert db.execute(select(func.count(Account.id))).scalar() == n_before
+
+
+def test_concurrent_duplicate_account_code_single_win():
+    """Two concurrent creations of the same code: exactly one succeeds."""
+    from app.core.security import hash_password
+    from app.models.auth import Role
+
+    url = os.environ["TEST_DATABASE_URL"]
+    assert "/scnc_test" in url
+    engine = create_engine(url)
+    try:
+        with Session(engine) as s:
+            s.execute(delete(AuditLog))
+            s.execute(delete(UserRole))
+            s.execute(delete(User))
+            s.execute(delete(Account))
+            s.execute(delete(SystemSetting))
+            s.commit()
+
+            role_id = s.execute(select(Role.id).where(Role.name == "Super Admin")).scalar_one()
+            for name in ("acctA_" + RID, "acctB_" + RID):
+                u = User(username=name, password_hash=hash_password("AcctPass123456!"))
+                s.add(u)
+                s.flush()
+                s.add(UserRole(user_id=u.id, role_id=role_id))
+            s.commit()
+
+        def attempt(me: str) -> int:
+            c = TestClient(create_app(), base_url="http://testserver")
+            try:
+                assert (
+                    c.post(
+                        "/api/v1/auth/login",
+                        json={"username": me, "password": "AcctPass123456!"},
+                    ).status_code
+                    == 200
+                )
+                return c.post(
+                    "/api/v1/accounts",
+                    json={
+                        "code": "DUP_" + RID, "name": "Dup", "type": "asset",
+                    },
+                ).status_code
+            finally:
+                c.close()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            f1 = pool.submit(attempt, "acctA_" + RID)
+            f2 = pool.submit(attempt, "acctB_" + RID)
+            codes = sorted([f1.result(), f2.result()])
+        assert codes == [201, 400], codes
+    finally:
+        with Session(engine) as s:
+            s.execute(delete(AuditLog))
+            s.execute(delete(UserRole))
+            s.execute(delete(User))
+            s.execute(delete(Account))
+            s.execute(delete(SystemSetting))
+            s.commit()
+        engine.dispose()

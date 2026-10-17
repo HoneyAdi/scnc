@@ -172,10 +172,9 @@ def test_concurrent_overlapping_periods_single_win():
                 c.close()
 
         with ThreadPoolExecutor(max_workers=2) as pool:
-            codes = sorted([
-                pool.submit(attempt, "ppcA_" + RID, "RACE1_" + RID).result(),
-                pool.submit(attempt, "ppcB_" + RID, "RACE2_" + RID).result(),
-            ])
+            f1 = pool.submit(attempt, "ppcA_" + RID, "RACE1_" + RID)
+            f2 = pool.submit(attempt, "ppcB_" + RID, "RACE2_" + RID)
+            codes = sorted([f1.result(), f2.result()])
         assert codes == [201, 400], codes
     finally:
         with Session(engine) as s:

@@ -52,15 +52,50 @@ def test_same_origin_and_absent_origin_allowed(client, superadmin):
     from tests.conftest import login_as
 
     login_as(client, "root_tester", "CorrectHorse12!")
-    # Same-origin browser POST passes.
     r = client.post(
         "/api/v1/admin/users",
         json={"username": "ok1", "password": "OkPass1234567!", "roles": []},
         headers={"Origin": "http://testserver"},
     )
     assert r.status_code == 201, r.text
-    # Non-browser clients (no Origin/Referer) still work; safe methods unaffected.
     assert client.get("/api/v1/me", headers={"Origin": "http://evil.test"}).status_code == 200
+
+
+def test_cookie_auth_missing_origin_rejected(client, superadmin):
+    from tests.conftest import login_as
+
+    login_as(client, "root_tester", "CorrectHorse12!")
+    r = client.post(
+        "/api/v1/admin/users",
+        json={"username": "noorig", "password": "NoOrigPass123!", "roles": []},
+    )
+    assert r.status_code == 403
+
+
+def test_bearer_auth_missing_origin_allowed(client, db, superadmin):
+    from tests.conftest import login_as
+
+    login_as(client, "root_tester", "CorrectHorse12!")
+    token = client.cookies.get("scnc_session")
+    client.cookies.clear()
+    r = client.post(
+        "/api/v1/admin/users",
+        json={"username": "bearertest", "password": "BearerPass123!", "roles": []},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 201, r.text
+
+
+def test_malformed_origin_with_cookie_rejected(client, superadmin):
+    from tests.conftest import login_as
+
+    login_as(client, "root_tester", "CorrectHorse12!")
+    r = client.post(
+        "/api/v1/admin/users",
+        json={"username": "malformed", "password": "MalformedPass1!", "roles": []},
+        headers={"Origin": "not-a-url###"},
+    )
+    assert r.status_code == 403
 
 
 def test_prod_refuses_insecure_startup():
