@@ -1,6 +1,6 @@
 ﻿# TESTING.md â€” SCN College Accounting Application (Canonical, Rev 5)
 
-**Status:** Phase 1+2+3 partial (2026-10-17): 57 pytest cases pass on an isolated PG16 test DB (auth, RBAC, audit, security/CSRF, atomicity, concurrency, periods, accounts); voucher/posting suites remain Planned.
+**Status:** Phase 1+2+3 partial (2026-10-17): 76 pytest cases pass on an isolated PG16 test DB (auth, RBAC, audit, security/CSRF, atomicity, concurrency, periods, accounts, draft vouchers/journal lines); posting/approval/reversal suites remain Planned.
 **Version:** Phase 0 Rev 5 â€” **Date:** 2026-10-15 (UTC)
 **Governs with:** `README.md`, `plan.md`, `ARCHITECTURE.md`, `DATABASE.md`, `PERMISSIONS.md`
 
@@ -211,7 +211,7 @@ if ($LASTEXITCODE -ne 0) { throw "focused suite failed (exit $LASTEXITCODE). Abo
 
 Frontend (Phase 1+): `npm ci` in `frontend\`; `npm test`; Playwright LAN smoke only against a disposable instance. Each run starts from a fresh `scnc_test` schema (`alembic upgrade head` after drop) and DEMO seed tagged `is_demo=true`; production data and DEMO data never share a database.
 
-## 3. Required acceptance suites (all Planned; evidence required to pass a gate)
+## 3. Required acceptance suites (suite 4 Authorization executed at the Phase 2 gate and a draft-voucher save suite executed at the Phase 3 partial gate - see section 5; the posting/approval/reversal suites remain Planned; evidence required to pass a gate)
 
 1. **Financial invariants (Phase 3 gate):** unbalanced journal rejected; single-line voucher rejected; one-sided-line CHECK holds; Î£Dr=Î£Cr>0 per posted voucher (DB dump assertion); TB sums to zero; P&L/BS agree to ledger; closed-period posting rejected; backdated-to-closed rejected; reversal creates linked negating voucher, original untouched.
 1A. **Voucher-line immutability (Phase 3 gate; all as the normal `scnc_app_test` role, never owner/superuser):** (a) direct `INSERT` of a voucher or line as app role â†’ denied by grant (all writes go through functions); (b) `INSERT` a new line into a `posted` voucher â†’ rejected; (c) `UPDATE` a line amount/narration/account on a `posted` voucher â†’ rejected; (d) `DELETE` a line from a `posted` voucher â†’ rejected; (e) `UPDATE` any column of a `posted` voucher row (narrative, dates, number) except the narrow posting/reversal transitions â†’ rejected; (f) direct `status` flip by raw SQL as app role â†’ rejected; (g) the single-transaction posting sequence itself (`fn_post_voucher`: lock â†’ validate complete journal â†’ subledger writes â†’ flip to `posted`, per DATABASE.md Â§3) succeeds and afterwards (b)â€“(f) are rejected; (h) authorized reversal **through the service** (with `vouchers.reverse` + bound pair approval) succeeds and posts a linked negating voucher while original lines are byte-identical. Each negative case asserts the database error/rollback AND that row counts and sums are unchanged.
@@ -259,6 +259,16 @@ Frontend (Phase 1+): `npm ci` in `frontend\`; `npm test`; Playwright LAN smoke o
   expected duplicate and a foreign-key failure that must not be masked). The migration roundtrip
   asserts the scratch database name is disposable before any DROP/CREATE. `pytest backend/tests -q`
   -> **57 passed**; the deterministic concurrency suites passed 5/5 consecutive runs.
+- 2026-10-17, same environment: draft voucher/journal-line save foundation added
+  (`alembic 0003`: `number_sequences`/`vouchers`/`voucher_lines`; `voucher_service.create_draft_voucher`
+  with period/account/amount/line validation, one-positive-side rule, per-`(voucher_type, fy_id)`
+  advisory-lock numbering, atomic insert, and audit; `GET`/`POST` `/vouchers` gated on
+  `vouchers.view`/`vouchers.create`). New focused suite `backend/tests/test_vouchers.py` -> **19 passed**
+  (auth 401/403, invalid type/period/date/closed-period/inactive+unknown account, negative/>2dp,
+  one-sided line, no-partial-rows on failure, audit-failure rollback, scoped sequential numbering,
+  draft-stays-draft with no mutating/posting route, list pagination). Full `pytest backend/tests -q`
+  -> **76 passed**; `0001/0002/0003` downgrade/upgrade roundtrip green; the deterministic concurrency
+  suites passed 5/5 consecutive runs. No posting, approval, or reversal path exists yet and none is claimed.
 
 ## 6. Coverage limitations (acknowledged)
 

@@ -1,6 +1,6 @@
 ﻿# DATABASE.md â€” SCN College Accounting Application (Canonical, Rev 5)
 
-**Status:** Phase 1+2+3 partial (2026-10-17): migrations 0001 (auth/audit) and 0002 (periods/accounts) implemented and verified by a downgrade/upgrade roundtrip on an isolated PG16 test DB; the full proposed schema is not yet built.
+**Status:** Phase 1+2+3 partial (2026-10-17): migrations 0001 (auth/audit), 0002 (periods/accounts), and 0003 (number_sequences/vouchers/voucher_lines - draft save only) implemented and verified by a downgrade/upgrade roundtrip on an isolated PG16 test DB; the full proposed schema is not yet built.
 **Version:** Phase 0 Rev 5 â€” **Date:** 2026-10-15 (UTC)
 **Governs with:** `README.md`, `plan.md`, `ARCHITECTURE.md`, `PERMISSIONS.md`, `TESTING.md`
 
@@ -15,6 +15,8 @@
 - No invented policies, amounts, rates, or balances in seeds; DEMO seed explicitly tagged.
 
 ## 2. Journal line constraints (normative)
+
+**Implementation status (2026-10-17):** only a draft-save slice of this section exists (migration 0003: `number_sequences`, `vouchers`, `voucher_lines` with the row-local CHECKs and `UNIQUE(voucher_type, fy_id, number)`; draft create/list/get via the normal application-role path with a transaction advisory lock for numbering). Sections 2A-2C (posting lock, `SECURITY DEFINER` draft/submit/edit functions with token-bound actors, restricted grants, immutability triggers, posting/approval/reversal) remain the NORMATIVE TARGET and are NOT implemented; the draft slice therefore does not yet enforce the least-privilege confinement described below (see also `plan.md` change-log entry 66 and the README/TESTING status notes).
 
 `vouchers(id PK, voucher_type, fy_idâ†’financial_periods, number, voucher_date, posting_date, narration, status, version INT DEFAULT 1, lines_hash CHAR(64), idempotency_key UNIQUE NULL, created_by, checked_by, approved_by, posted_by, posted_at, reverses_voucher_id NULLâ†’vouchers, adjusts_voucher_id NULLâ†’vouchers, source_entity, source_id)`
 

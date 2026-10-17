@@ -190,11 +190,12 @@ def test_migration_downgrade_upgrade_roundtrip():
                     "users", "roles", "permissions", "user_roles", "role_permissions",
                     "sessions", "audit_log", "system_settings",
                     "financial_periods", "accounts",
+                    "vouchers", "voucher_lines", "number_sequences",
                 ):
                     assert expected in names, expected
                 from app.models.auth import Permission
 
-                assert s.execute(select(func.count(Permission.id))).scalar() >= 12
+                assert s.execute(select(func.count(Permission.id))).scalar() >= 14
         finally:
             eng.dispose()
     finally:

@@ -1,4 +1,6 @@
 """Pydantic request/response schemas (validation at the boundary)."""
+from decimal import Decimal
+
 from pydantic import BaseModel, Field
 
 
@@ -70,3 +72,18 @@ class CreateAccountRequest(BaseModel):
 class UpdateAccountRequest(BaseModel):
     name: str | None = Field(default=None, max_length=128)
     is_active: bool | None = None
+
+
+class VoucherLineRequest(BaseModel):
+    account_id: int
+    debit: Decimal = Decimal("0")
+    credit: Decimal = Decimal("0")
+    narrative: str = Field(default="", max_length=500)
+
+
+class CreateVoucherRequest(BaseModel):
+    voucher_type: str = Field(min_length=1, max_length=24)
+    fy_id: int
+    voucher_date: str
+    narration: str = Field(default="", max_length=500)
+    lines: list[VoucherLineRequest] = Field(default_factory=list)

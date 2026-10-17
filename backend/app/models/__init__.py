@@ -1,4 +1,4 @@
-from app.models.accounting import Account, FinancialPeriod
+from app.models.accounting import Account, FinancialPeriod, NumberSequence, Voucher, VoucherLine
 from app.models.auth import (
     AuditLog,
     Permission,
@@ -14,6 +14,7 @@ __all__ = [
     "Account",
     "AuditLog",
     "FinancialPeriod",
+    "NumberSequence",
     "Permission",
     "Role",
     "RolePermission",
@@ -21,4 +22,6 @@ __all__ = [
     "SystemSetting",
     "User",
     "UserRole",
+    "Voucher",
+    "VoucherLine",
 ]

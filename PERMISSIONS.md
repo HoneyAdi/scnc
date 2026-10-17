@@ -1,6 +1,6 @@
 ﻿# PERMISSIONS.md â€” SCN College Accounting Application (Canonical, Rev 5)
 
-**Status:** Phase 1+2+3 partial (2026-10-17): RBAC roles/permissions, sessions, and the last-active-Super-Admin guard are implemented and enforced server-side with passing pytest; voucher approval workflows are not yet built.
+**Status:** Phase 1+2+3 partial (2026-10-17): RBAC roles/permissions, sessions, and the last-active-Super-Admin guard are implemented and enforced server-side with passing pytest; a draft voucher/journal-line save foundation is implemented and gated on the `vouchers.view`/`vouchers.create` permission codes (create/list/get drafts only); voucher posting, approval, and reversal workflows are not yet built.
 **Version:** Phase 0 Rev 5 â€” **Date:** 2026-10-15 (UTC)
 **Governs with:** `README.md`, `plan.md`, `ARCHITECTURE.md`, `DATABASE.md`, `TESTING.md`
 
@@ -65,9 +65,9 @@ Default sensitive flows Maker â†’ Checker â†’ Approver â†’ Posted
 
 Backup requires `backup.administer`; scheduled backups record `backup_history(location, sha256, outcome)` + audit. Restore is a privileged dual-control action: `backup.administer` + re-auth + second-approver reason + mandatory pre-restore backup; restore drills on a clean host are required before go-live (Phase 9) and each drill is audited with its verification result. Attachment restores are included and hash-verified.
 
-## 8. Enforcement points (implemented and tested in Phase 2; none exist yet)
+## 8. Enforcement points (`require(permission)` implemented and tested in Phase 2 and used by the draft voucher endpoints; `deny_self_approval`, `check_period_open`, `check_entity_state`, and masking serializers not yet built)
 
-FastAPI dependencies `require(permission)`, `deny_self_approval`, `check_period_open`, `check_entity_state`, field-masking serializers. Required negative tests listed in TESTING.md Â§3 (direct-API 403s, revoked-session rejection, last-admin guard, limit enforcement, posting/draft/edit-approval/reversal suites 1Aâ€“1D, posted-immutability).
+FastAPI dependency `require(permission)` is implemented and enforced on protected routes (including `vouchers.view`/`vouchers.create` for the draft slice). Still planned: `deny_self_approval`, `check_period_open`, `check_entity_state`, field-masking serializers. Required negative tests listed in TESTING.md Â§3 (direct-API 403s, revoked-session rejection, last-admin guard, limit enforcement, posting/draft/edit-approval/reversal suites 1Aâ€“1D, posted-immutability).
 
 ## 9. Open decisions (plan.md Â§10A/10B)
 
