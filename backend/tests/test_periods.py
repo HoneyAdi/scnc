@@ -4,6 +4,7 @@ import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -120,6 +121,46 @@ def test_period_creation_audited(client, db, superadmin):
         select(AuditLog).where(AuditLog.action == "period.close")
     ).all()
     assert len(rows) == 1
+
+
+def test_period_duplicate_code_is_clean_400(client, db, superadmin):
+    """The expected duplicate: a second create with the same code is a clean 400,
+    exactly one row exists, and only the winner produced an audit event."""
+    login_as(client, "root_tester", "CorrectHorse12!")
+    code = "DUPP_" + RID
+    first = _period(client, code=code, starts="2035-04-01", ends="2036-03-31")
+    assert first.status_code == 201, first.text
+    second = _period(client, code=code, starts="2037-04-01", ends="2038-03-31")
+    assert second.status_code == 400, second.text
+    assert db.execute(
+        select(func.count(FinancialPeriod.id)).where(FinancialPeriod.code == code)
+    ).scalar() == 1
+    rows = db.execute(select(AuditLog).where(AuditLog.action == "period.create")).all()
+    assert len(rows) == 1
+
+
+def test_period_non_duplicate_integrity_error_is_not_masked(db):
+    """A flush failure for ANY reason other than the code unique index must not
+    be reported as a duplicate code (400): it propagates as a real integrity
+    error. Here a non-existent actor id violates the created_by foreign key.
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    from app.services import accounting_service
+
+    class _GhostActor:
+        id = 10 ** 9  # no such users.id -> fk_financial_periods_created_by_users
+
+    code = "GHOSTPK_" + RID
+    with pytest.raises(IntegrityError):
+        accounting_service.create_period(
+            db, actor=_GhostActor(), code=code, name="ghost",
+            starts_on=dt.date(2039, 4, 1), ends_on=dt.date(2040, 3, 31),
+        )
+    # Session rolled back and reusable; nothing persisted.
+    assert db.execute(
+        select(func.count(FinancialPeriod.id)).where(FinancialPeriod.code == code)
+    ).scalar() == 0
 
 
 def test_concurrent_overlapping_periods_single_win():

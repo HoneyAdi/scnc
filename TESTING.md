@@ -1,6 +1,6 @@
 ﻿# TESTING.md â€” SCN College Accounting Application (Canonical, Rev 5)
 
-**Status:** Phase 1+2+3 partial (2026-10-17): 52 pytest cases pass on an isolated PG16 test DB (auth, RBAC, audit, security/CSRF, atomicity, concurrency, periods, accounts); voucher/posting suites remain Planned.
+**Status:** Phase 1+2+3 partial (2026-10-17): 57 pytest cases pass on an isolated PG16 test DB (auth, RBAC, audit, security/CSRF, atomicity, concurrency, periods, accounts); voucher/posting suites remain Planned.
 **Version:** Phase 0 Rev 5 â€” **Date:** 2026-10-15 (UTC)
 **Governs with:** `README.md`, `plan.md`, `ARCHITECTURE.md`, `DATABASE.md`, `PERMISSIONS.md`
 
@@ -8,7 +8,7 @@
 
 Pyramid: unit (services/math) > API (HTTPX + authZ matrix) > integration (PostgreSQL + storage) > pilot E2E. Money paths use `Decimal`; rounding/boundary cases included. Report tests parse PDF/Excel content vs on-screen JSON, not status codes alone. Every suite states its phase gate from plan.md.
 
-Concurrency tests assert outcomes that must hold under ANY interleaving and, where two writers must provably overlap, rendezvous deterministically through a test-only hook (`accounting_service._create_barrier`: `None` and inert in production) instead of relying on thread timing. Real-commit tests delete only the rows they create and never empty shared tables; where a test needs a globally clean system it aborts on unexpected committed data rather than deleting it.
+Concurrency tests assert outcomes that must hold under ANY interleaving and, where two writers must provably overlap, rendezvous deterministically through a test-only hook (`accounting_service._create_barrier`: `None` and inert in production) instead of relying on thread timing. Real-commit tests delete only the rows they create and never empty shared tables; where a test needs a globally clean system it aborts on unexpected committed data rather than deleting it. Audit rows are cleaned by `actor_id` scope only (never by action pattern), and `create_period`/`create_account` translate ONLY the expected duplicate-code unique violation (server SQLSTATE `23505` on the named `uq_financial_periods_code`/`uq_accounts_code` constraint) into the same clean 400 a sequential caller sees; every other `IntegrityError` is rolled back and propagated to the normal error path (no SQL or internals leaked).
 
 ## 2. Reproducible Windows setup (normative; pinned in Phase 1)
 
@@ -240,7 +240,7 @@ Frontend (Phase 1+): `npm ci` in `frontend\`; `npm test`; Playwright LAN smoke o
 - 2026-10-17, Python 3.11.8 / PostgreSQL 16.15 (psql) / node v24.15.0 / npm 11.12.1,
   `DATABASE_URL` host `127.0.0.1:5434/scnc_test` as `scnc_app_test` (live-verified:
   `current_database()`=`scnc_test`, `current_user`=`scnc_app_test`):
-  `pytest backend/tests -q` -> **52 passed** (includes the 0001/0002 downgrade/upgrade
+  `pytest backend/tests -q` -> **57 passed** (includes the 0001/0002 downgrade/upgrade
   roundtrip on scratch `scnc_test_migcheck` as `scnc_test_owner`).
 - 2026-10-17, same environment: the two concurrency suites now force a deterministic
   rendezvous through a test-only hook (`accounting_service._create_barrier`: `None` and
@@ -250,6 +250,15 @@ Frontend (Phase 1+): `npm ci` in `frontend\`; `npm test`; Playwright LAN smoke o
   and ABORTS on unexpected committed users rather than deleting them.
 - 2026-10-17, same environment: frontend `npm run build` (`tsc -b` + vite v8.3.4) -> success;
   `npm run lint` (oxlint) -> 0 errors, 1 pre-existing fast-refresh warning.
+- 2026-10-17, same environment: test-safety corrections. Cleanup now deletes audit rows by
+  `actor_id` scope only (the blanket `action LIKE 'stress.%'` delete in `scrub_test_users`
+  and `test_audit` is removed; a regression test asserts the emitted SQL never uses an action
+  pattern). `create_period`/`create_account` translate ONLY the expected duplicate-code unique
+  violation (server SQLSTATE `23505` on `uq_financial_periods_code`/`uq_accounts_code`) into the
+  clean 400; any other `IntegrityError` is rolled back and propagated (new tests cover both the
+  expected duplicate and a foreign-key failure that must not be masked). The migration roundtrip
+  asserts the scratch database name is disposable before any DROP/CREATE. `pytest backend/tests -q`
+  -> **57 passed**; the deterministic concurrency suites passed 5/5 consecutive runs.
 
 ## 6. Coverage limitations (acknowledged)
 

@@ -120,13 +120,15 @@ def scrub_test_users(engine) -> None:
         clauses = [User.username.like(p) for p in SCRUB_LIKE_PREFIXES]
         ids = s.execute(select(User.id).where(or_(*clauses))).scalars().all()
         if ids:
+            # Audit rows are removed by actor_id, so the stress actor's events
+            # (action "stress.*") are covered here. Deleting by action pattern
+            # would be broader than this run's actors and is never done.
             s.execute(delete(AuditLog).where(AuditLog.actor_id.in_(ids)))
             s.execute(delete(DbSession).where(DbSession.user_id.in_(ids)))
             s.execute(delete(FinancialPeriod).where(FinancialPeriod.created_by.in_(ids)))
             s.execute(delete(Account).where(Account.created_by.in_(ids)))
             s.execute(delete(UserRole).where(UserRole.user_id.in_(ids)))
             s.execute(delete(User).where(User.id.in_(ids)))
-            s.execute(delete(AuditLog).where(AuditLog.action.like("stress.%")))
             s.commit()
 
 

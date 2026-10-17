@@ -3,6 +3,7 @@ import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -109,6 +110,45 @@ def test_failed_account_create_rolls_back(client, db, superadmin):
     assert r.status_code == 400
     # Service-level failure commits nothing (asserted on a fresh connection).
     assert db.execute(select(func.count(Account.id))).scalar() == n_before
+
+
+def test_account_duplicate_code_is_clean_400(client, db, superadmin):
+    """The expected duplicate: a second create with the same code is a clean 400,
+    exactly one row exists, and only the winner produced an audit event."""
+    login_as(client, "root_tester", "CorrectHorse12!")
+    code = "DUPC_" + RID
+    first = _acct(client, code=code, name="First", type="asset")
+    assert first.status_code == 201, first.text
+    second = _acct(client, code=code, name="Second", type="asset")
+    assert second.status_code == 400, second.text
+    assert db.execute(
+        select(func.count(Account.id)).where(Account.code == code)
+    ).scalar() == 1
+    rows = db.execute(select(AuditLog).where(AuditLog.action == "account.create")).all()
+    assert len(rows) == 1
+
+
+def test_account_non_duplicate_integrity_error_is_not_masked(db):
+    """A flush failure for ANY reason other than the code unique index must not
+    be reported as a duplicate code (400): it propagates as a real integrity
+    error. Here a non-existent actor id violates the created_by foreign key.
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    from app.services import accounting_service
+
+    class _GhostActor:
+        id = 10 ** 9  # no such users.id -> fk_accounts_created_by_users
+
+    code = "GHOSTFK_" + RID
+    with pytest.raises(IntegrityError):
+        accounting_service.create_account(
+            db, actor=_GhostActor(), code=code, name="ghost", type="asset",
+        )
+    # Session rolled back and reusable; nothing persisted.
+    assert db.execute(
+        select(func.count(Account.id)).where(Account.code == code)
+    ).scalar() == 0
 
 
 def test_concurrent_duplicate_account_code_single_win():

@@ -40,11 +40,15 @@ def test_concurrent_audit_appends_keep_single_chain(client, db, superadmin, app_
     from app.models.auth import AuditLog, User
 
     def _scrub(s):
-        # Idempotent pre/post cleanup: a previously crashed run must not pollute this one.
-        from sqlalchemy import delete
-
-        s.execute(delete(AuditLog).where(AuditLog.action.like("stress.%")))
-        s.execute(delete(User).where(User.username == "stress_actor_" + RID))
+        # Idempotent pre/post cleanup scoped to THIS run's stress actor only: a
+        # previously crashed run must not pollute this one, yet no event from any
+        # other actor may ever be deleted (even one also using action "stress.*").
+        actor_ids = s.execute(
+            select(User.id).where(User.username == "stress_actor_" + RID)
+        ).scalars().all()
+        if actor_ids:
+            s.execute(delete(AuditLog).where(AuditLog.actor_id.in_(actor_ids)))
+            s.execute(delete(User).where(User.id.in_(actor_ids)))
         s.commit()
 
     # Concurrent writers use their own committed connections, so the actor must
@@ -105,11 +109,47 @@ def test_concurrent_audit_appends_keep_single_chain(client, db, superadmin, app_
         cleanup = app_engine.connect()
         try:
             with SaSession(bind=cleanup) as s:
-                s.execute(delete(AuditLog).where(AuditLog.action.like("stress.%")))
-                s.execute(delete(User).where(User.username == "stress_actor_" + RID))
-                s.commit()
+                _scrub(s)
         finally:
             cleanup.close()
+
+
+def test_scrub_test_users_deletes_only_by_user_scope(app_engine):
+    """Regression: test cleanup must delete audit rows by ACTOR scope, never by
+    an action pattern. A pattern delete (e.g. action LIKE 'stress.%') would wipe
+    unrelated events; this asserts the emitted SQL never does that.
+    """
+    from sqlalchemy import event, select
+    from sqlalchemy.orm import Session as SaSession
+
+    from app.core.security import hash_password
+    from app.models.auth import User
+    from tests.conftest import scrub_test_users
+
+    username = "atomic_" + RID  # matches a scrub prefix -> auto-cleaned even on crash
+    with SaSession(app_engine) as s:
+        s.add(User(username=username, password_hash=hash_password("ScrubScope123!")))
+        s.commit()
+
+    statements: list[str] = []
+
+    def _capture(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(app_engine, "before_cursor_execute", _capture)
+    try:
+        scrub_test_users(app_engine)
+    finally:
+        event.remove(app_engine, "before_cursor_execute", _capture)
+
+    joined = " ".join(statements).lower()
+    assert "delete from audit_log" in joined  # audit cleanup still happens
+    assert "action like" not in joined  # ...but never by an action pattern
+    with SaSession(app_engine) as s:
+        assert (
+            s.execute(select(User.id).where(User.username == username)).scalar_one_or_none()
+            is None
+        )
 
 
 def test_tampered_record_reports_first_bad_id(client, db, superadmin):

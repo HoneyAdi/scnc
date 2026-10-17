@@ -34,6 +34,30 @@ def _hit_create_barrier() -> None:
         barrier()
 
 
+# PostgreSQL SQLSTATE for a unique-constraint violation.
+_PG_UNIQUE_VIOLATION = "23505"
+# The single unique index that means "code already exists" for each table.
+_PERIOD_CODE_CONSTRAINT = "uq_financial_periods_code"
+_ACCOUNT_CODE_CONSTRAINT = "uq_accounts_code"
+
+
+def _is_duplicate_code_error(exc: IntegrityError, constraint: str) -> bool:
+    """True ONLY when the failed flush violated the named CODE unique index.
+
+    Classifies by the stable server SQLSTATE (23505) and the constraint name
+    from the server diagnostic -- never by human-readable message text, which is
+    locale/version dependent. Any other integrity failure (foreign key, check,
+    or an unforeseen unique index) returns False so it can propagate instead of
+    being mislabeled as a duplicate code.
+    """
+    orig = getattr(exc, "orig", None)
+    if getattr(orig, "sqlstate", None) != _PG_UNIQUE_VIOLATION:
+        return False
+    diag = getattr(orig, "diag", None)
+    name = getattr(diag, "constraint_name", None) if diag is not None else None
+    return name == constraint
+
+
 def _period_overlap(db: DbSession, starts_on: dt.date, ends_on: dt.date, exclude_id: int | None = None):
     stmt = select(FinancialPeriod).where(
         and_(FinancialPeriod.starts_on <= ends_on, FinancialPeriod.ends_on >= starts_on)
@@ -64,11 +88,15 @@ def create_period(
     db.add(period)
     try:
         db.flush()
-    except IntegrityError:
-        # A concurrent same-code insert beat us to the unique index after the
-        # pre-check; surface the same clean rejection a sequential caller sees.
+    except IntegrityError as exc:
+        # Roll back the aborted transaction before the session is reused. Only a
+        # concurrent SAME-CODE insert (unique index on code) is translated into
+        # the clean rejection a sequential caller sees; every other integrity
+        # failure propagates and is handled by the app's normal error path.
         db.rollback()
-        raise AccountingError("Period code already exists.")
+        if _is_duplicate_code_error(exc, _PERIOD_CODE_CONSTRAINT):
+            raise AccountingError("Period code already exists.")
+        raise
     audit_service.log_event(
         db, actor_id=actor.id, action="period.create", entity="financial_periods",
         entity_id=period.id,
@@ -143,12 +171,15 @@ def create_account(
     db.add(account)
     try:
         db.flush()
-    except IntegrityError:
-        # Two concurrent creators passed the code pre-check; the unique index
-        # serialized them and one lost. Reject identically to a sequential
-        # duplicate instead of leaking a 500.
+    except IntegrityError as exc:
+        # Roll back the aborted transaction before the session is reused. Only a
+        # concurrent SAME-CODE insert (unique index on code) becomes the clean
+        # duplicate rejection; any other integrity failure (FK, check, or an
+        # unforeseen unique index) propagates instead of being masked as a 400.
         db.rollback()
-        raise AccountingError("Account code already exists.")
+        if _is_duplicate_code_error(exc, _ACCOUNT_CODE_CONSTRAINT):
+            raise AccountingError("Account code already exists.")
+        raise
     _assert_no_cycle(db, account.id, parent_id)
     audit_service.log_event(
         db, actor_id=actor.id, action="account.create", entity="accounts",

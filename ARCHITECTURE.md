@@ -1,6 +1,6 @@
 ﻿# ARCHITECTURE.md â€” SCN College Accounting Application (Canonical, Rev 5)
 
-**Status:** Phase 1+2+3 partial (2026-10-17): 52 pytest pass; Phase 0 remains UNAPPROVED. Auth/RBAC/audit and periods/accounts implemented; voucher/posting pending.
+**Status:** Phase 1+2+3 partial (2026-10-17): 57 pytest pass; Phase 0 remains UNAPPROVED. Auth/RBAC/audit and periods/accounts implemented; voucher/posting pending.
 **Version:** Phase 0 Rev 5 â€” **Date:** 2026-10-15 (UTC)
 **Governs with:** `README.md`, `plan.md`, `DATABASE.md`, `PERMISSIONS.md`, `TESTING.md`
 **Frozen inputs:** `SCN_README.md`, `SCN_plan.md` (do not edit)

@@ -140,6 +140,16 @@ def test_migration_downgrade_upgrade_roundtrip():
     env["TEST_DB_OWNER_PASSWORD"] = os.environ.get("SCNC_TEST_OWNER_PASSWORD", "")
     if not env["TEST_DB_OWNER_PASSWORD"]:
         pytest.skip("SCNC_TEST_OWNER_PASSWORD not provided; refusing to guess credentials")
+    # Fail closed BEFORE any DROP/CREATE: the roundtrip may only ever target a
+    # dedicated disposable scratch database, never the live test database
+    # (scnc_test) and never anything off-pattern.
+    import re
+
+    scratch = env["TEST_DB_NAME"]
+    assert re.fullmatch(r"scnc_test_[a-z0-9]+", scratch), (
+        f"refusing migration roundtrip: scratch DB {scratch!r} is not disposable"
+    )
+    assert scratch != "scnc_test", "roundtrip must never target the live test database"
     base = [sys.executable, "-m", "alembic", "-c", "backend\\alembic.ini"]
     from pathlib import Path
 
