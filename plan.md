@@ -11,9 +11,9 @@
 | Phase | Scope | Status | Evidence |
 |---|---|---|---|
 | 0 | Requirements & architecture (this revision) | In review â€” not approved | This file + 5 canonical docs; no code |
-| 1 | Secure project foundation + authN/authZ foundation (built 2026-10-16) | Implemented + tested (16/16 pytest pass on isolated PG16 test DB; backend + frontend verified running; report in session log) | backend/, frontend/, alembic 0001, pytest 2026-10-16 |
-| 2 | AuthN/AuthZ, bootstrap, RBAC, sessions, audit | Implemented + tested (partial; 2026-10-17 pytest pass) | backend/app + alembic 0001; backend/tests/test_{auth,rbac,security,audit,atomicity_migrations,setup_concurrency,admin_concurrency}.py |
-| 3 | Accounting foundation (COA, journal, periods, TB) + department/cost-centre dimension + cash/bank masters | Implemented + tested (partial: COA + periods only; journal/posting NOT built) | backend/app + alembic 0002; frontend Periods/Accounts; backend/tests/test_{periods,accounts}.py |
+| 1 | Secure project foundation + authN/authZ foundation (built 2026-10-16) | Implemented + tested (52/52 pytest pass on isolated PG16 test DB as of 2026-10-17; backend + frontend `npm run build` verified) | backend/, frontend/, alembic 0001, pytest 2026-10-17 |
+| 2 | AuthN/AuthZ, bootstrap, RBAC, sessions, audit | Implemented + tested (partial; 52/52 pytest pass on isolated PG16 test DB, 2026-10-17) | backend/app + alembic 0001; backend/tests/test_{auth,rbac,security,audit,atomicity_migrations,setup_concurrency,admin_concurrency}.py |
+| 3 | Accounting foundation (COA, journal, periods, TB) + department/cost-centre dimension + cash/bank masters | Implemented + tested (partial: COA + periods only; journal/posting NOT built; 52/52 pytest pass incl. migration roundtrip, 2026-10-17) | backend/app + alembic 0002; frontend Periods/Accounts; backend/tests/test_{periods,accounts}.py |
 | 4 | Students, enrollment history, fees, hostel accounting, opening receivables | Planned, gated on Phase 3 | â€” |
 | 5 | Six student documents | Planned, gated on Phase 4 | â€” |
 | 6 | Suppliers and payables | Planned, gated on Phase 3 | â€” |

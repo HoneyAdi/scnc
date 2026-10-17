@@ -4,14 +4,18 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, delete, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.main import create_app
 from app.models.accounting import Account
-from app.models.auth import AuditLog, SystemSetting, User, UserRole
-from app.models.auth import Session as DbSession
-from tests.conftest import login_as
+from app.models.auth import AuditLog, User, UserRole
+from tests.conftest import (
+    assert_connected_test_db,
+    delete_user_graph,
+    live_engine,
+    login_as,
+)
 
 RID = f"{os.getpid()}{uuid.uuid4().hex[:6]}"
 
@@ -108,25 +112,37 @@ def test_failed_account_create_rolls_back(client, db, superadmin):
 
 
 def test_concurrent_duplicate_account_code_single_win():
-    """Two concurrent creations of the same code: exactly one succeeds."""
+    """Two concurrent creations of the SAME code: exactly one wins, the other is
+    cleanly rejected (400, never a 500), and exactly one row exists.
+
+    Determinism: both requests are forced through `accounting_service._create_barrier`
+    AFTER the code pre-check and BEFORE the competing INSERT, so the unique-index
+    race is exercised on every run instead of depending on thread timing. The
+    barrier is a bounded (30s) two-party rendezvous; it can never hang the suite.
+
+    Cleanup is strictly scoped to the two users this test creates and their
+    dependent rows (audit/sessions/accounts/user_roles); no shared table is
+    emptied.
+    """
+    import threading
+
     from app.core.security import hash_password
     from app.models.auth import Role
+    from app.services import accounting_service
 
-    url = os.environ["TEST_DATABASE_URL"]
-    assert "/scnc_test" in url
-    engine = create_engine(url)
+    names = ("acctA_" + RID, "acctB_" + RID)
+    contested_code = "DUP_" + RID
+    engine = live_engine()
+    assert_connected_test_db(engine)
+    delete_user_graph(engine, names)  # idempotent pre-clean for crashed reruns
+    barrier = threading.Barrier(2, timeout=30)
+    accounting_service._create_barrier = barrier.wait
     try:
         with Session(engine) as s:
-            s.execute(delete(AuditLog))
-            s.execute(delete(DbSession))
-            s.execute(delete(UserRole))
-            s.execute(delete(Account))
-            s.execute(delete(User))
-            s.execute(delete(SystemSetting))
-            s.commit()
-
-            role_id = s.execute(select(Role.id).where(Role.name == "Super Admin")).scalar_one()
-            for name in ("acctA_" + RID, "acctB_" + RID):
+            role_id = s.execute(
+                select(Role.id).where(Role.name == "Super Admin")
+            ).scalar_one()
+            for name in names:
                 u = User(username=name, password_hash=hash_password("AcctPass123456!"))
                 s.add(u)
                 s.flush()
@@ -136,35 +152,31 @@ def test_concurrent_duplicate_account_code_single_win():
         def attempt(me: str) -> int:
             c = TestClient(create_app(), base_url="http://testserver")
             try:
-                assert (
-                    c.post(
-                        "/api/v1/auth/login",
-                        json={"username": me, "password": "AcctPass123456!"},
-                    ).status_code
-                    == 200
+                r = c.post(
+                    "/api/v1/auth/login",
+                    json={"username": me, "password": "AcctPass123456!"},
+                    headers={"Origin": "http://testserver"},
                 )
+                assert r.status_code == 200, r.text
                 return c.post(
                     "/api/v1/accounts",
-                    json={
-                        "code": "DUP_" + RID, "name": "Dup", "type": "asset",
-                    },
+                    json={"code": contested_code, "name": "Dup", "type": "asset"},
                     headers={"Origin": "http://testserver"},
                 ).status_code
             finally:
                 c.close()
 
         with ThreadPoolExecutor(max_workers=2) as pool:
-            f1 = pool.submit(attempt, "acctA_" + RID)
-            f2 = pool.submit(attempt, "acctB_" + RID)
+            f1 = pool.submit(attempt, names[0])
+            f2 = pool.submit(attempt, names[1])
             codes = sorted([f1.result(), f2.result()])
-        assert codes == [201, 400], codes
-    finally:
+        assert codes == [201, 400], f"exactly one winner expected, got {codes}"
         with Session(engine) as s:
-            s.execute(delete(AuditLog))
-            s.execute(delete(DbSession))
-            s.execute(delete(UserRole))
-            s.execute(delete(Account))
-            s.execute(delete(User))
-            s.execute(delete(SystemSetting))
-            s.commit()
+            count = s.execute(
+                select(func.count(Account.id)).where(Account.code == contested_code)
+            ).scalar()
+        assert count == 1, f"expected exactly one account for the contested code, got {count}"
+    finally:
+        accounting_service._create_barrier = None
+        delete_user_graph(engine, names)
         engine.dispose()

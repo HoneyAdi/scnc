@@ -80,4 +80,4 @@ Legal entity + accounting basis; academic calendar; fee heads/amounts/instalment
 
 ## 8. Implementation status
 
-**Phase 1+2+3 partial (2026-10-17):** auth/RBAC/sessions/audit and financial periods/chart-of-accounts are implemented with 52 passing pytest cases on an isolated PG16 test DB; migrations 0001/0002 exist. The voucher/journal-posting engine is NOT built. Phase 0 remains UNAPPROVED. See `plan.md` progress table and `TESTING.md` Â§Executed-results (currently "none").
+**Phase 1+2+3 partial (2026-10-17):** auth/RBAC/sessions/audit and financial periods/chart-of-accounts are implemented with 52 passing pytest cases on an isolated PG16 test DB; migrations 0001/0002 exist. The voucher/journal-posting engine is NOT built. Phase 0 remains UNAPPROVED. See `plan.md` progress table and `TESTING.md` Â§5 Executed-results (latest run recorded there).

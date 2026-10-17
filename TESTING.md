@@ -8,6 +8,8 @@
 
 Pyramid: unit (services/math) > API (HTTPX + authZ matrix) > integration (PostgreSQL + storage) > pilot E2E. Money paths use `Decimal`; rounding/boundary cases included. Report tests parse PDF/Excel content vs on-screen JSON, not status codes alone. Every suite states its phase gate from plan.md.
 
+Concurrency tests assert outcomes that must hold under ANY interleaving and, where two writers must provably overlap, rendezvous deterministically through a test-only hook (`accounting_service._create_barrier`: `None` and inert in production) instead of relying on thread timing. Real-commit tests delete only the rows they create and never empty shared tables; where a test needs a globally clean system it aborts on unexpected committed data rather than deleting it.
+
 ## 2. Reproducible Windows setup (normative; pinned in Phase 1)
 
 Prerequisites (64-bit Windows 10/11): Python **3.12.x** (from python.org, "Add to PATH" checked), PostgreSQL **16.x** (`psql` in PATH), Node **20 LTS** (frontend, Phase 1+), Git. Versions recorded with `python --version`, `psql --version`, `node --version` in every test report.
@@ -235,6 +237,19 @@ Frontend (Phase 1+): `npm ci` in `frontend\`; `npm test`; Playwright LAN smoke o
   `pytest backend/tests -q` → **16 passed**.
 - 2026-10-16, same environment + roles: security-hardening + periods/accounts
   suites added; results recorded per run below. Fabrication is forbidden.
+- 2026-10-17, Python 3.11.8 / PostgreSQL 16.15 (psql) / node v24.15.0 / npm 11.12.1,
+  `DATABASE_URL` host `127.0.0.1:5434/scnc_test` as `scnc_app_test` (live-verified:
+  `current_database()`=`scnc_test`, `current_user`=`scnc_app_test`):
+  `pytest backend/tests -q` -> **52 passed** (includes the 0001/0002 downgrade/upgrade
+  roundtrip on scratch `scnc_test_migcheck` as `scnc_test_owner`).
+- 2026-10-17, same environment: the two concurrency suites now force a deterministic
+  rendezvous through a test-only hook (`accounting_service._create_barrier`: `None` and
+  inert in production) and a duplicate-insert race maps the unique-index `IntegrityError`
+  to the SAME clean 400 a sequential duplicate returns (no 500). Real-commit tests delete
+  ONLY the rows they create (no blanket table wipes); the session cleanup is prefix-scoped
+  and ABORTS on unexpected committed users rather than deleting them.
+- 2026-10-17, same environment: frontend `npm run build` (`tsc -b` + vite v8.3.4) -> success;
+  `npm run lint` (oxlint) -> 0 errors, 1 pre-existing fast-refresh warning.
 
 ## 6. Coverage limitations (acknowledged)
 

@@ -4,47 +4,27 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
 from app.main import create_app
-from app.models.accounting import Account, FinancialPeriod
-from app.models.auth import (
-    AuditLog,
-    Role,
-    Session as DbSession,
-    SystemSetting,
-    User,
-    UserRole,
+from app.models.auth import Role, User, UserRole
+from tests.conftest import (
+    assert_connected_test_db,
+    assert_no_unexpected_users,
+    delete_user_graph,
+    live_engine,
 )
 
 # Per-run unique suffix: concurrent or crashed-and-rerun suites never share rows.
 RID = f"{os.getpid()}{uuid.uuid4().hex[:6]}"
 
-
-def _wipe_live(engine) -> None:
-    # Order respects FK RESTRICT guards (audit/sessions/periods/accounts reference users).
-    with Session(engine) as s:
-        s.execute(delete(AuditLog))
-        s.execute(delete(DbSession))
-        s.execute(delete(FinancialPeriod))
-        s.execute(delete(Account))
-        s.execute(delete(UserRole))
-        s.execute(delete(User))
-        s.execute(delete(SystemSetting))
-        s.commit()
-
-
-def _live_engine():
-    url = os.environ["TEST_DATABASE_URL"]
-    assert "/scnc_test" in url
-    return create_engine(url)
+# The two admins each test creates; cleanup is scoped to exactly these.
+NAMES = ("concA_" + RID, "concB_" + RID)
 
 
 def _make_admins(s, role_id, names):
-    from app.core.security import hash_password
-
     ids = {}
     for name in names:
         u = User(username=name, password_hash=hash_password("ConcPass123456!"))
@@ -86,25 +66,23 @@ def test_concurrent_last_admin_deactivation():
     Without serialization both requests could observe two active admins and
     both deactivate; the membership advisory lock makes the count check and
     the write atomic, so the second deterministically sees the last admin.
-    Real commits on the disposable test DB; everything created is deleted in
-    `finally`.
+    Real commits on the disposable test DB; cleanup is scoped to the two users
+    this test creates (never a blanket table wipe).
     """
-    from sqlalchemy import func, select
-
-    from app.models.auth import Role
-
-    engine = _live_engine()
+    engine = live_engine()
+    assert_connected_test_db(engine)
+    delete_user_graph(engine, NAMES)  # idempotent pre-clean for crashed reruns
     try:
-        _wipe_live(engine)
+        assert_no_unexpected_users(engine)
         with Session(engine) as s:
             role_id = s.execute(
                 select(Role.id).where(Role.name == "Super Admin")
             ).scalar_one()
-            ids = _make_admins(s, role_id, ("concA_" + RID, "concB_" + RID))
+            ids = _make_admins(s, role_id, NAMES)
 
-        token1 = _login_token("concA_" + RID)
-        token2 = _login_token("concA_" + RID)
-        target = ids["concB_" + RID]
+        token1 = _login_token(NAMES[0])
+        token2 = _login_token(NAMES[0])
+        target = ids[NAMES[1]]
         with ThreadPoolExecutor(max_workers=2) as pool:
             codes = sorted([
                 pool.submit(_deactivate, target, token1).result(),
@@ -117,7 +95,7 @@ def test_concurrent_last_admin_deactivation():
                 == 1
             )
     finally:
-        _wipe_live(engine)
+        delete_user_graph(engine, NAMES)
         engine.dispose()
 
 
@@ -128,24 +106,22 @@ def test_mutual_deactivation_leaves_one_survivor():
     the loser acts after their own deactivation); what must always hold is a
     single surviving active Super Admin and no silent double removal.
     """
-    from sqlalchemy import func, select
-
-    from app.models.auth import Role
-
-    engine = _live_engine()
+    engine = live_engine()
+    assert_connected_test_db(engine)
+    delete_user_graph(engine, NAMES)  # idempotent pre-clean for crashed reruns
     try:
-        _wipe_live(engine)
+        assert_no_unexpected_users(engine)
         with Session(engine) as s:
             role_id = s.execute(
                 select(Role.id).where(Role.name == "Super Admin")
             ).scalar_one()
-            ids = _make_admins(s, role_id, ("concA_" + RID, "concB_" + RID))
+            ids = _make_admins(s, role_id, NAMES)
 
-        token_a = _login_token("concA_" + RID)
-        token_b = _login_token("concB_" + RID)
+        token_a = _login_token(NAMES[0])
+        token_b = _login_token(NAMES[1])
         with ThreadPoolExecutor(max_workers=2) as pool:
-            f1 = pool.submit(_deactivate, ids["concB_" + RID], token_a)
-            f2 = pool.submit(_deactivate, ids["concA_" + RID], token_b)
+            f1 = pool.submit(_deactivate, ids[NAMES[1]], token_a)
+            f2 = pool.submit(_deactivate, ids[NAMES[0]], token_b)
             codes = sorted([f1.result(), f2.result()])
         assert codes in ([200, 400], [200, 401]), codes
         with Session(engine) as s:
@@ -161,5 +137,5 @@ def test_mutual_deactivation_leaves_one_survivor():
                 .where(User.is_active.is_(True), Role.name == "Super Admin")
             ).scalar() == 1
     finally:
-        _wipe_live(engine)
+        delete_user_graph(engine, NAMES)
         engine.dispose()

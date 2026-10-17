@@ -4,8 +4,10 @@ Scope: masters only. No voucher posting exists yet; posting workflows (later)
 must refuse inactive accounts and closed periods — enforced there, not here.
 """
 import datetime as dt
+from typing import Callable
 
 from sqlalchemy import and_, or_, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DbSession
 
 from app.models.accounting import ACCOUNT_TYPES, Account, FinancialPeriod
@@ -15,6 +17,21 @@ from app.services import audit_service
 
 class AccountingError(Exception):
     pass
+
+
+# Test-only synchronization hook: None under normal operation, and no
+# application code ever sets it. A concurrency test may install a callable here
+# so that two concurrent create_period/create_account calls both reach the
+# post-validation stage before either can complete the competing insert. This
+# proves overlap deterministically instead of relying on thread timing; the
+# hook is inert in production. See TESTING.md.
+_create_barrier: "Callable[[], None] | None" = None
+
+
+def _hit_create_barrier() -> None:
+    barrier = _create_barrier
+    if barrier is not None:
+        barrier()
 
 
 def _period_overlap(db: DbSession, starts_on: dt.date, ends_on: dt.date, exclude_id: int | None = None):
@@ -34,6 +51,7 @@ def create_period(
         raise AccountingError("Period end date must be on or after the start date.")
     if db.execute(select(FinancialPeriod).where(FinancialPeriod.code == code)).scalar_one_or_none():
         raise AccountingError("Period code already exists.")
+    _hit_create_barrier()
     # Serialize concurrent creations: the overlap check and the insert must be
     # atomic with respect to each other across processes.
     db.execute(text("SELECT pg_advisory_xact_lock(hashtext('scn_periods'))"))
@@ -44,7 +62,13 @@ def create_period(
         status="open", created_by=actor.id,
     )
     db.add(period)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        # A concurrent same-code insert beat us to the unique index after the
+        # pre-check; surface the same clean rejection a sequential caller sees.
+        db.rollback()
+        raise AccountingError("Period code already exists.")
     audit_service.log_event(
         db, actor_id=actor.id, action="period.create", entity="financial_periods",
         entity_id=period.id,
@@ -111,12 +135,20 @@ def create_account(
             raise AccountingError("Parent account is inactive.")
         if parent.type != type:
             raise AccountingError("Child account type must equal its parent's type.")
+    _hit_create_barrier()
     account = Account(
         code=code, name=name, type=type, parent_id=parent_id,
         description=description, created_by=actor.id,
     )
     db.add(account)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        # Two concurrent creators passed the code pre-check; the unique index
+        # serialized them and one lost. Reject identically to a sequential
+        # duplicate instead of leaking a 500.
+        db.rollback()
+        raise AccountingError("Account code already exists.")
     _assert_no_cycle(db, account.id, parent_id)
     audit_service.log_event(
         db, actor_id=actor.id, action="account.create", entity="accounts",

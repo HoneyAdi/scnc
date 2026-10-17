@@ -1,16 +1,22 @@
 ﻿"""Financial periods: validation, lifecycle, permissions, concurrency."""
+import datetime as dt
 import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, delete
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.main import create_app
 from app.models.accounting import FinancialPeriod
-from app.models.auth import AuditLog, SystemSetting, User, UserRole
-from tests.conftest import login_as
+from app.models.auth import AuditLog, User, UserRole
+from tests.conftest import (
+    assert_connected_test_db,
+    delete_user_graph,
+    live_engine,
+    login_as,
+)
 
 # Per-run unique suffix: concurrent or crashed-and-rerun suites never share rows.
 RID = f"{os.getpid()}{uuid.uuid4().hex[:6]}"
@@ -117,34 +123,38 @@ def test_period_creation_audited(client, db, superadmin):
 
 
 def test_concurrent_overlapping_periods_single_win():
-    """Two concurrent creations of the same range: exactly one succeeds."""
-    from sqlalchemy import select
+    """Two concurrent creations of OVERLAPPING ranges: exactly one wins, the
+    other is cleanly rejected (400), and exactly one period exists for the
+    contested range.
 
-    url = os.environ["TEST_DATABASE_URL"]
-    assert "/scnc_test" in url
-    engine = create_engine(url)
+    Determinism: both requests pass `accounting_service._create_barrier` after
+    the code pre-check and before the serializing advisory lock, so they
+    provably reach the critical section together. The barrier is bounded (30s).
+
+    Cleanup is strictly scoped to the two users this test creates and their
+    dependent rows; no shared table is emptied.
+    """
+    import threading
+
+    from app.core.security import hash_password
+    from app.models.auth import Role
+    from app.services import accounting_service
+
+    names = ("ppcA_" + RID, "ppcB_" + RID)
+    codes = ("RACE1_" + RID, "RACE2_" + RID)
+    starts, ends = "2031-04-01", "2032-03-31"
+    starts_d, ends_d = dt.date.fromisoformat(starts), dt.date.fromisoformat(ends)
+    engine = live_engine()
+    assert_connected_test_db(engine)
+    delete_user_graph(engine, names)  # idempotent pre-clean for crashed reruns
+    barrier = threading.Barrier(2, timeout=30)
+    accounting_service._create_barrier = barrier.wait
     try:
         with Session(engine) as s:
-            from app.models.accounting import Account, FinancialPeriod
-            from app.models.auth import Session as DbSession
-
-            s.execute(delete(AuditLog))
-            s.execute(delete(DbSession))
-            s.execute(delete(FinancialPeriod))
-            s.execute(delete(Account))
-            s.execute(delete(SystemSetting))
-            from sqlalchemy import delete as _d
-
-            from app.models.auth import User as _U, UserRole as _UR
-
-            s.execute(_d(_UR))
-            s.execute(_d(_U))
-            s.commit()
-            from app.core.security import hash_password
-            from app.models.auth import Role
-
-            role_id = s.execute(select(Role.id).where(Role.name == "Super Admin")).scalar_one()
-            for name in ("ppcA_" + RID, "ppcB_" + RID):
+            role_id = s.execute(
+                select(Role.id).where(Role.name == "Super Admin")
+            ).scalar_one()
+            for name in names:
                 u = User(username=name, password_hash=hash_password("PpcPass123456!"))
                 s.add(u)
                 s.flush()
@@ -152,49 +162,36 @@ def test_concurrent_overlapping_periods_single_win():
             s.commit()
 
         def attempt(me: str, code: str) -> int:
-            from sqlalchemy import select as _s
-
             c = TestClient(create_app(), base_url="http://testserver")
             try:
-                assert (
-                    c.post(
-                        "/api/v1/auth/login",
-                        json={"username": me, "password": "PpcPass123456!"},
-                    ).status_code
-                    == 200
+                r = c.post(
+                    "/api/v1/auth/login",
+                    json={"username": me, "password": "PpcPass123456!"},
+                    headers={"Origin": "http://testserver"},
                 )
+                assert r.status_code == 200, r.text
                 return c.post(
                     "/api/v1/periods",
-                    json={
-                        "code": code, "name": code,
-                        "starts_on": "2031-04-01", "ends_on": "2032-03-31",
-                    },
+                    json={"code": code, "name": code, "starts_on": starts, "ends_on": ends},
                     headers={"Origin": "http://testserver"},
                 ).status_code
             finally:
                 c.close()
 
         with ThreadPoolExecutor(max_workers=2) as pool:
-            f1 = pool.submit(attempt, "ppcA_" + RID, "RACE1_" + RID)
-            f2 = pool.submit(attempt, "ppcB_" + RID, "RACE2_" + RID)
-            codes = sorted([f1.result(), f2.result()])
-        assert codes == [201, 400], codes
-    finally:
+            f1 = pool.submit(attempt, names[0], codes[0])
+            f2 = pool.submit(attempt, names[1], codes[1])
+            result = sorted([f1.result(), f2.result()])
+        assert result == [201, 400], f"exactly one winner expected, got {result}"
         with Session(engine) as s:
-            from app.models.accounting import Account as _A
-            from app.models.accounting import FinancialPeriod as _FP
-            from app.models.auth import Session as _S
-
-            s.execute(delete(AuditLog))
-            s.execute(delete(_S))
-            s.execute(delete(_FP))
-            s.execute(delete(_A))
-            s.execute(delete(SystemSetting))
-            from sqlalchemy import delete as _d
-
-            from app.models.auth import User as _U, UserRole as _UR
-
-            s.execute(_d(_UR))
-            s.execute(_d(_U))
-            s.commit()
+            count = s.execute(
+                select(func.count(FinancialPeriod.id)).where(
+                    FinancialPeriod.starts_on <= ends_d,
+                    FinancialPeriod.ends_on >= starts_d,
+                )
+            ).scalar()
+        assert count == 1, f"expected exactly one period for the contested range, got {count}"
+    finally:
+        accounting_service._create_barrier = None
+        delete_user_graph(engine, names)
         engine.dispose()
